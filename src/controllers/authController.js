@@ -35,12 +35,12 @@ export const login = async (req, res) => {
 
 export const signup = async (req, res) => {
   try {
-    const { name, email, password, role = 'sales' } = req.body;
+    const { name, email, password, role = 'executive', reporting_to, branch, joining_date } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     
     const result = await db.query(
-      'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id',
-      [name, email, hashedPassword, role]
+      'INSERT INTO users (name, email, password, role, reporting_to, branch, joining_date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [name, email, hashedPassword, role, reporting_to || null, branch || null, joining_date || new Date()]
     );
 
     res.status(201).json({ message: 'User created successfully', userId: result.rows[0].id });

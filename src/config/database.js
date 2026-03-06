@@ -6,8 +6,12 @@ dotenv.config();
 const { Pool } = pg;
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || `postgres://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT || 5432}/${process.env.DB_NAME}`,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  ssl: false
 });
 
 pool.on('error', (err) => {

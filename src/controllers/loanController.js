@@ -3,20 +3,16 @@ import { buildUpdateQuery } from '../utils/postgres.js';
 
 export const getAllLoans = async (req, res) => {
   try {
-    const { status, bank_id, user_id } = req.query;
+    const { status, bank_id, assigned_to } = req.query;
     let query = `
       SELECT l.*, 
         b.name as bank_name, 
         br.name as broker_name, 
-        u.name as user_name,
-        ab.name as assigned_bank_name,
-        abr.name as assigned_broker_name
+        u.name as assigned_user_name
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
       LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.user_id = u.id
-      LEFT JOIN banks ab ON l.assigned_bank_id = ab.id
-      LEFT JOIN brokers abr ON l.assigned_broker_id = abr.id
+      LEFT JOIN users u ON l.assigned_to = u.id
       WHERE 1=1
     `;
     const params = [];
@@ -27,13 +23,12 @@ export const getAllLoans = async (req, res) => {
       params.push(status);
     }
     if (bank_id) {
-      query += ` AND (l.bank_id = $${paramCount} OR l.assigned_bank_id = $${paramCount})`;
-      paramCount++;
+      query += ` AND l.bank_id = $${paramCount++}`;
       params.push(bank_id);
     }
-    if (user_id) {
-      query += ` AND l.user_id = $${paramCount++}`;
-      params.push(user_id);
+    if (assigned_to) {
+      query += ` AND l.assigned_to = $${paramCount++}`;
+      params.push(assigned_to);
     }
 
     query += ' ORDER BY l.created_at DESC';
@@ -50,15 +45,11 @@ export const getLoanById = async (req, res) => {
       SELECT l.*, 
         b.name as bank_name, 
         br.name as broker_name, 
-        u.name as user_name,
-        ab.name as assigned_bank_name,
-        abr.name as assigned_broker_name
+        u.name as assigned_user_name
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
       LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.user_id = u.id
-      LEFT JOIN banks ab ON l.assigned_bank_id = ab.id
-      LEFT JOIN brokers abr ON l.assigned_broker_id = abr.id
+      LEFT JOIN users u ON l.assigned_to = u.id
       WHERE l.id = $1
     `, [req.params.id]);
     

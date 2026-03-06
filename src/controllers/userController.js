@@ -4,7 +4,7 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, role, phone, status, created_at FROM users ORDER BY created_at DESC');
+    const result = await db.query('SELECT id, name, email, role, branch, reporting_to, joining_date, created_at FROM users ORDER BY created_at DESC');
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -13,7 +13,7 @@ export const getAllUsers = async (req, res) => {
 
 export const getUserById = async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, role, phone, status, created_at FROM users WHERE id = $1', [req.params.id]);
+    const result = await db.query('SELECT id, name, email, role, branch, reporting_to, joining_date, created_at FROM users WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }

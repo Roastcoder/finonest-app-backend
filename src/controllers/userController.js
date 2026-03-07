@@ -4,15 +4,26 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const result = await db.query(`
+    let query = `
       SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
              b.name as branch_name,
              m.full_name as manager_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
       LEFT JOIN users m ON u.reporting_to = m.id
-      ORDER BY u.created_at DESC
-    `);
+    `;
+    
+    const params = [];
+    
+    // Team leaders can only see their team members
+    if (req.user.role === 'team_leader') {
+      query += ' WHERE u.reporting_to = $1';
+      params.push(req.user.id);
+    }
+    
+    query += ' ORDER BY u.created_at DESC';
+    
+    const result = await db.query(query, params);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -114,6 +125,38 @@ export const deleteUser = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const searchUser = async (req, res) => {
+  try {
+    const { name } = req.query;
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to,
+             m.full_name as manager_name, m.role as manager_role
+      FROM users u
+      LEFT JOIN users m ON u.reporting_to = m.id
+      WHERE u.full_name ILIKE $1
+    `, [`%${name}%`]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getTeamMembers = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      WHERE u.reporting_to = $1
+      ORDER BY u.created_at DESC
+    `, [req.params.leaderId]);
+    res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

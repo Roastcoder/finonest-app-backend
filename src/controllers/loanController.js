@@ -63,18 +63,58 @@ export const getLoanById = async (req, res) => {
 };
 
 export const createLoan = async (req, res) => {
+  const client = await db.connect();
   try {
-    const keys = Object.keys(req.body);
-    const values = Object.values(req.body);
+    await client.query('BEGIN');
+    
+    // Get user details
+    const userResult = await client.query(
+      'SELECT id, full_name FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    
+    if (userResult.rows.length === 0) {
+      throw new Error('User not found');
+    }
+    
+    const user = userResult.rows[0];
+    const initials = (user.full_name || 'XX').substring(0, 2).toUpperCase();
+    const userId = String(user.id).padStart(4, '0');
+    
+    // Get next sequence for this user with row lock
+    const seqResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(loan_number FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+       FROM loans 
+       WHERE created_by = $1 
+       FOR UPDATE`,
+      [req.user.id]
+    );
+    
+    const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
+    const loanId = `${initials}-${userId}-${sequence}`;
+    
+    // Insert loan with generated loan_number
+    const loanData = { ...req.body, loan_number: loanId };
+    const keys = Object.keys(loanData);
+    const values = Object.values(loanData);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
     
-    const result = await db.query(
-      `INSERT INTO loans (${keys.join(', ')}) VALUES (${placeholders}) RETURNING id`,
+    const result = await client.query(
+      `INSERT INTO loans (${keys.join(', ')}) VALUES (${placeholders}) RETURNING id, loan_number`,
       values
     );
-    res.status(201).json({ message: 'Loan created successfully', loanId: result.rows[0].id });
+    
+    await client.query('COMMIT');
+    res.status(201).json({ 
+      message: 'Loan created successfully', 
+      id: result.rows[0].id,
+      loan_number: result.rows[0].loan_number 
+    });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

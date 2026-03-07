@@ -26,13 +26,16 @@ DROP TABLE IF EXISTS users CASCADE;
 -- Create users table with hierarchy
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
+  user_id VARCHAR(50) UNIQUE NOT NULL,
+  full_name VARCHAR(255) NOT NULL,
   email VARCHAR(255) UNIQUE NOT NULL,
   password VARCHAR(255) NOT NULL,
+  phone VARCHAR(20),
   role VARCHAR(50) DEFAULT 'executive',
   reporting_to INT,
-  branch VARCHAR(255),
+  branch_id INT,
   joining_date DATE,
+  status VARCHAR(20) DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (reporting_to) REFERENCES users(id) ON DELETE SET NULL
@@ -403,5 +406,5 @@ INSERT INTO system_config (config_key, config_value, config_type, description) V
 ('allowed_file_types', 'jpg,jpeg,png,pdf', 'document', 'Allowed file extensions');
 
 -- Insert default admin user (password: admin123)
-INSERT INTO users (name, email, password, role) VALUES
-('Admin User', 'admin@finonest.com', '$2a$10$rZ5YvqZ5YvqZ5YvqZ5YvqOqZ5YvqZ5YvqZ5YvqZ5YvqZ5YvqZ5Yvq', 'admin');
+INSERT INTO users (user_id, full_name, email, password, role) VALUES
+('AD-0001', 'Admin User', 'admin@finonest.com', '$2a$10$rZ5YvqZ5YvqZ5YvqZ5YvqOqZ5YvqZ5YvqZ5YvqZ5YvqZ5YvqZ5Yvq', 'admin');

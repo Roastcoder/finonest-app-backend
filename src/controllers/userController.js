@@ -4,7 +4,15 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getAllUsers = async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, role, branch, reporting_to, joining_date, created_at FROM users ORDER BY created_at DESC');
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+             b.name as branch_name,
+             m.full_name as manager_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      LEFT JOIN users m ON u.reporting_to = m.id
+      ORDER BY u.created_at DESC
+    `);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -13,7 +21,15 @@ export const getAllUsers = async (req, res) => {
 
 export const getUserById = async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, role, branch, reporting_to, joining_date, created_at FROM users WHERE id = $1', [req.params.id]);
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+             b.name as branch_name,
+             m.full_name as manager_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      LEFT JOIN users m ON u.reporting_to = m.id
+      WHERE u.id = $1
+    `, [req.params.id]);
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -70,11 +86,17 @@ export const createUser = async (req, res) => {
 
 export const updateUser = async (req, res) => {
   try {
-    const { password, ...userData } = req.body;
+    const { password, role, branch_id, reporting_to, ...userData } = req.body;
+    const updates = { ...userData };
+    
     if (password) {
-      userData.password = await bcrypt.hash(password, 10);
+      updates.password = await bcrypt.hash(password, 10);
     }
-    const { query, values } = buildUpdateQuery('users', userData, req.params.id);
+    if (role) updates.role = role;
+    if (branch_id !== undefined) updates.branch_id = branch_id;
+    if (reporting_to !== undefined) updates.reporting_to = reporting_to;
+    
+    const { query, values } = buildUpdateQuery('users', updates, req.params.id);
     const result = await db.query(query, values);
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });

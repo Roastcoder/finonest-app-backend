@@ -5,7 +5,12 @@ import db from '../config/database.js';
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await db.query(`
+      SELECT u.*, m.full_name as manager_name, m.role as manager_role
+      FROM users u
+      LEFT JOIN users m ON u.reporting_to = m.id
+      WHERE u.email = $1
+    `, [email]);
     
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -26,7 +31,14 @@ export const login = async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
+      user: { 
+        id: user.id, 
+        name: user.full_name, 
+        email: user.email, 
+        role: user.role,
+        manager_name: user.manager_name,
+        manager_role: user.manager_role
+      }
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -76,7 +88,13 @@ export const signup = async (req, res) => {
 
 export const getProfile = async (req, res) => {
   try {
-    const result = await db.query('SELECT id, name, email, role, phone, status FROM users WHERE id = $1', [req.user.id]);
+    const result = await db.query(`
+      SELECT u.id, u.full_name as name, u.email, u.role, u.phone, u.status, u.reporting_to,
+             m.full_name as manager_name, m.role as manager_role
+      FROM users u
+      LEFT JOIN users m ON u.reporting_to = m.id
+      WHERE u.id = $1
+    `, [req.user.id]);
     res.json(result.rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });

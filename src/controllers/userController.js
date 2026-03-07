@@ -24,8 +24,11 @@ export const getUserById = async (req, res) => {
 };
 
 export const createUser = async (req, res) => {
+  const client = await db.connect();
   try {
-    const { password, role, ...userData } = req.body;
+    await client.query('BEGIN');
+    
+    const { password, role, full_name, email, phone, branch_id } = req.body;
     
     // Managers can only create team_leader and executive roles
     if (req.user.role === 'manager' && !['team_leader', 'executive'].includes(role)) {
@@ -33,16 +36,35 @@ export const createUser = async (req, res) => {
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    const data = { ...userData, role, password: hashedPassword };
-    const { keys, values, params } = toPostgresParams(data);
     
-    const result = await db.query(
-      `INSERT INTO users (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
-      values
+    // Generate unique user ID
+    const seqResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+       FROM users 
+       FOR UPDATE`
     );
-    res.status(201).json({ message: 'User created successfully', userId: result.rows[0].id });
+    
+    const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
+    const initials = (full_name || 'XX').substring(0, 2).toUpperCase();
+    const userId = `${initials}-${sequence}`;
+    
+    const result = await client.query(
+      `INSERT INTO users (user_id, full_name, email, password, phone, role, branch_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, user_id`,
+      [userId, full_name, email, hashedPassword, phone || null, role, branch_id || null]
+    );
+    
+    await client.query('COMMIT');
+    res.status(201).json({ 
+      message: 'User created successfully', 
+      userId: result.rows[0].id,
+      user_id: result.rows[0].user_id
+    });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

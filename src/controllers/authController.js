@@ -34,21 +34,43 @@ export const login = async (req, res) => {
 };
 
 export const signup = async (req, res) => {
+  const client = await db.connect();
   try {
-    const { name, email, password, role = 'executive', reporting_to, branch, joining_date } = req.body;
+    await client.query('BEGIN');
+    
+    const { name, email, password, phone, role = 'executive', reporting_to, branch, joining_date } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    const result = await db.query(
-      'INSERT INTO users (name, email, password, role, reporting_to, branch, joining_date) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [name, email, hashedPassword, role, reporting_to || null, branch || null, joining_date || new Date()]
+    // Generate unique user ID
+    const seqResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+       FROM users 
+       FOR UPDATE`
+    );
+    
+    const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
+    const initials = (name || 'XX').substring(0, 2).toUpperCase();
+    const userId = `${initials}-${sequence}`;
+    
+    const result = await client.query(
+      'INSERT INTO users (user_id, full_name, email, password, phone, role, reporting_to, branch, joining_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, user_id',
+      [userId, name, email, hashedPassword, phone || null, role, reporting_to || null, branch || null, joining_date || new Date()]
     );
 
-    res.status(201).json({ message: 'User created successfully', userId: result.rows[0].id });
+    await client.query('COMMIT');
+    res.status(201).json({ 
+      message: 'User created successfully', 
+      userId: result.rows[0].id,
+      user_id: result.rows[0].user_id 
+    });
   } catch (error) {
+    await client.query('ROLLBACK');
     if (error.code === '23505') {
       return res.status(400).json({ error: 'Email already exists' });
     }
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

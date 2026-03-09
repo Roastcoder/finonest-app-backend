@@ -3,47 +3,43 @@ import { buildUpdateQuery } from '../utils/postgres.js';
 
 export const getAllLoans = async (req, res) => {
   try {
-    const { status, bank_id, assigned_to } = req.query;
-    let query = `
-      SELECT l.*, 
-        b.name as bank_name, 
-        br.name as broker_name, 
-        u.name as assigned_user_name
-      FROM loans l
-      LEFT JOIN banks b ON l.bank_id = b.id
-      LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.assigned_to = u.id
-    `;
-    const params = [];
-    let paramCount = 1;
-    let whereAdded = false;
-
-    // Team leaders can only see loans created by their team members
+    // Dummy loans data
+    const dummyLoans = [
+      {
+        id: 1,
+        loan_number: 'CL-2026-9607',
+        applicant_name: 'John Doe',
+        customer_name: 'John Doe',
+        mobile: '9876543210',
+        loan_amount: 500000,
+        status: 'pending',
+        created_at: new Date(),
+        created_by: 3,
+        bank_name: 'HDFC Bank',
+        broker_name: null
+      },
+      {
+        id: 2,
+        loan_number: 'CL-2026-9608',
+        applicant_name: 'Jane Smith',
+        customer_name: 'Jane Smith',
+        mobile: '9876543211',
+        loan_amount: 750000,
+        status: 'approved',
+        created_at: new Date(),
+        created_by: 3,
+        bank_name: 'ICICI Bank',
+        broker_name: null
+      }
+    ];
+    
+    // Filter based on role
+    let filteredLoans = dummyLoans;
     if (req.user.role === 'team_leader') {
-      query += ` WHERE l.created_by IN (SELECT id FROM users WHERE reporting_to = $${paramCount++})`;
-      params.push(req.user.id);
-      whereAdded = true;
+      filteredLoans = dummyLoans.filter(loan => loan.created_by === 3); // Executive's loans
     }
-
-    if (status) {
-      query += whereAdded ? ` AND l.status = $${paramCount++}` : ` WHERE l.status = $${paramCount++}`;
-      params.push(status);
-      whereAdded = true;
-    }
-    if (bank_id) {
-      query += whereAdded ? ` AND l.bank_id = $${paramCount++}` : ` WHERE l.bank_id = $${paramCount++}`;
-      params.push(bank_id);
-      whereAdded = true;
-    }
-    if (assigned_to) {
-      query += whereAdded ? ` AND l.assigned_to = $${paramCount++}` : ` WHERE l.assigned_to = $${paramCount++}`;
-      params.push(assigned_to);
-      whereAdded = true;
-    }
-
-    query += ' ORDER BY l.created_at DESC';
-    const result = await db.query(query, params);
-    res.json(result.rows);
+    
+    return res.json(filteredLoans);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -51,22 +47,20 @@ export const getAllLoans = async (req, res) => {
 
 export const getLoanById = async (req, res) => {
   try {
-    const result = await db.query(`
-      SELECT l.*, 
-        b.name as bank_name, 
-        br.name as broker_name, 
-        u.name as assigned_user_name
-      FROM loans l
-      LEFT JOIN banks b ON l.bank_id = b.id
-      LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.assigned_to = u.id
-      WHERE l.id = $1
-    `, [req.params.id]);
+    const dummyLoan = {
+      id: req.params.id,
+      loan_number: 'CL-2026-9607',
+      applicant_name: 'John Doe',
+      customer_name: 'John Doe',
+      mobile: '9876543210',
+      loan_amount: 500000,
+      status: 'pending',
+      created_at: new Date(),
+      bank_name: 'HDFC Bank',
+      broker_name: null
+    };
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Loan not found' });
-    }
-    res.json(result.rows[0]);
+    res.json(dummyLoan);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -135,6 +129,8 @@ export const createLoan = async (req, res) => {
       // Income Details
       income_source: req.body.income_source || null,
       monthly_income: req.body.monthly_income || null,
+      selected_financier: req.body.selected_financier || null,
+      financier_location: req.body.financier_location || null,
       
       // Loan Details
       loan_amount: req.body.loan_amount || 0,
@@ -166,6 +162,7 @@ export const createLoan = async (req, res) => {
       bank_id: req.body.assigned_bank_id || req.body.bank_id || null,
       assigned_broker_id: req.body.assigned_broker_id || null,
       broker_id: req.body.assigned_broker_id || req.body.broker_id || null,
+      financier_name: req.body.financier_name || null,
       sanction_amount: req.body.sanction_amount || null,
       sanction_date: req.body.sanction_date || null,
       

@@ -3,65 +3,64 @@ import { buildUpdateQuery } from '../utils/postgres.js';
 
 export const getAllLoans = async (req, res) => {
   try {
-    // Dummy loans data
-    const dummyLoans = [
-      {
-        id: 1,
-        loan_number: 'CL-2026-9607',
-        applicant_name: 'John Doe',
-        customer_name: 'John Doe',
-        mobile: '9876543210',
-        loan_amount: 500000,
-        status: 'pending',
-        created_at: new Date(),
-        created_by: 3,
-        bank_name: 'HDFC Bank',
-        broker_name: null
-      },
-      {
-        id: 2,
-        loan_number: 'CL-2026-9608',
-        applicant_name: 'Jane Smith',
-        customer_name: 'Jane Smith',
-        mobile: '9876543211',
-        loan_amount: 750000,
-        status: 'approved',
-        created_at: new Date(),
-        created_by: 3,
-        bank_name: 'ICICI Bank',
-        broker_name: null
-      }
-    ];
+    let query = `
+      SELECT l.*, 
+        b.bank_name, 
+        br.broker_name,
+        u.full_name as created_by_name
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      LEFT JOIN brokers br ON l.broker_id = br.id
+      LEFT JOIN users u ON l.created_by = u.id
+    `;
     
-    // Filter based on role
-    let filteredLoans = dummyLoans;
+    const conditions = [];
+    const values = [];
+    
     if (req.user.role === 'team_leader') {
-      filteredLoans = dummyLoans.filter(loan => loan.created_by === 3); // Executive's loans
+      conditions.push('l.created_by = $1');
+      values.push(req.user.id);
+    } else if (req.user.role === 'executive') {
+      conditions.push('l.created_by = $1');
+      values.push(req.user.id);
     }
     
-    return res.json(filteredLoans);
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY l.created_at DESC';
+    
+    const result = await db.query(query, values);
+    return res.json(result.rows);
   } catch (error) {
+    console.error('Get loans error:', error);
     res.status(500).json({ error: error.message });
   }
 };
 
 export const getLoanById = async (req, res) => {
   try {
-    const dummyLoan = {
-      id: req.params.id,
-      loan_number: 'CL-2026-9607',
-      applicant_name: 'John Doe',
-      customer_name: 'John Doe',
-      mobile: '9876543210',
-      loan_amount: 500000,
-      status: 'pending',
-      created_at: new Date(),
-      bank_name: 'HDFC Bank',
-      broker_name: null
-    };
+    const result = await db.query(
+      `SELECT l.*, 
+        b.bank_name, 
+        br.broker_name,
+        u.full_name as created_by_name
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      LEFT JOIN brokers br ON l.broker_id = br.id
+      LEFT JOIN users u ON l.created_by = u.id
+      WHERE l.id = $1`,
+      [req.params.id]
+    );
     
-    res.json(dummyLoan);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Loan not found' });
+    }
+    
+    res.json(result.rows[0]);
   } catch (error) {
+    console.error('Get loan by ID error:', error);
     res.status(500).json({ error: error.message });
   }
 };

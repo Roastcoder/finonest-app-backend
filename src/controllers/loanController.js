@@ -4,26 +4,28 @@ import { buildUpdateQuery } from '../utils/postgres.js';
 export const getAllLoans = async (req, res) => {
   try {
     let query = `
-      SELECT l.*, 
-        b.bank_name, 
-        br.broker_name,
-        u.full_name as created_by_name
+      SELECT l.* 
       FROM loans l
-      LEFT JOIN banks b ON l.bank_id = b.id
-      LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.created_by = u.id
     `;
     
     const conditions = [];
     const values = [];
     
-    if (req.user.role === 'team_leader') {
+    if (req.user.role === 'executive') {
+      // Executive sirf apni loans dekhega
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
-    } else if (req.user.role === 'executive') {
-      conditions.push('l.created_by = $1');
-      values.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
+      // Team leader apni aur apne team members ki loans dekhega
+      const teamResult = await db.query(
+        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
+        [req.user.id]
+      );
+      const teamIds = teamResult.rows.map(r => r.id);
+      conditions.push(`l.created_by = ANY($1)`);
+      values.push(teamIds);
     }
+    // Admin/others ke liye koi filter nahi
     
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
@@ -34,7 +36,8 @@ export const getAllLoans = async (req, res) => {
     const result = await db.query(query, values);
     return res.json(result.rows);
   } catch (error) {
-    console.error('Get loans error:', error);
+    console.error('Get loans error:', error.message);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -42,15 +45,7 @@ export const getAllLoans = async (req, res) => {
 export const getLoanById = async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT l.*, 
-        b.bank_name, 
-        br.broker_name,
-        u.full_name as created_by_name
-      FROM loans l
-      LEFT JOIN banks b ON l.bank_id = b.id
-      LEFT JOIN brokers br ON l.broker_id = br.id
-      LEFT JOIN users u ON l.created_by = u.id
-      WHERE l.id = $1`,
+      'SELECT * FROM loans WHERE id = $1',
       [req.params.id]
     );
     
@@ -60,7 +55,7 @@ export const getLoanById = async (req, res) => {
     
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Get loan by ID error:', error);
+    console.error('Get loan by ID error:', error.message);
     res.status(500).json({ error: error.message });
   }
 };
@@ -97,10 +92,18 @@ export const createLoan = async (req, res) => {
     const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
     const loanId = req.body.loan_number || `${initials}-${userId}-${sequence}`;
     
+    // Get existing columns from loans table
+    const columnsResult = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'loans'
+    `);
+    const existingColumns = columnsResult.rows.map(r => r.column_name);
+    console.log('Available columns:', existingColumns.length);
+    
     // Create comprehensive loan data object with all frontend fields
     const loanData = {
       loan_number: loanId,
-      // Customer Details
       customer_id: req.body.customer_id || null,
       applicant_name: req.body.applicant_name || null,
       customer_name: req.body.applicant_name || req.body.customer_name || null,
@@ -111,40 +114,32 @@ export const createLoan = async (req, res) => {
       co_applicant_mobile: req.body.co_applicant_mobile || null,
       guarantor_name: req.body.guarantor_name || null,
       guarantor_mobile: req.body.guarantor_mobile || null,
-      
-      // Address Details
       current_address: req.body.current_address || null,
       current_village: req.body.current_village || null,
       current_tehsil: req.body.current_tehsil || null,
       current_district: req.body.current_district || null,
+      current_state: req.body.current_state || null,
       current_pincode: req.body.current_pincode || null,
       permanent_address: req.body.permanent_address || null,
       permanent_village: req.body.permanent_village || null,
       permanent_tehsil: req.body.permanent_tehsil || null,
       permanent_district: req.body.permanent_district || null,
+      permanent_state: req.body.permanent_state || null,
       permanent_pincode: req.body.permanent_pincode || null,
       our_branch: req.body.our_branch || null,
-      
-      // Income Details
       income_source: req.body.income_source || null,
       monthly_income: req.body.monthly_income || null,
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
-      
-      // Loan Details
       loan_amount: req.body.loan_amount || 0,
       ltv: req.body.ltv || null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,
-      
-      // Vehicle Details
       vehicle_number: req.body.vehicle_number || null,
       maker_name: req.body.maker_name || null,
       model_variant_name: req.body.model_variant_name || null,
       mfg_year: req.body.mfg_year || null,
       vertical: req.body.vertical || null,
       scheme: req.body.scheme || null,
-      
-      // EMI Details
       emi_amount: req.body.emi_amount || req.body.emi || null,
       emi: req.body.emi || req.body.emi_amount || null,
       total_emi: req.body.total_emi || null,
@@ -155,8 +150,6 @@ export const createLoan = async (req, res) => {
       emi_start_date: req.body.emi_start_date || null,
       emi_end_date: req.body.emi_end_date || null,
       processing_fee: req.body.processing_fee || null,
-      
-      // Financier Details
       assigned_bank_id: req.body.assigned_bank_id || null,
       bank_id: req.body.assigned_bank_id || req.body.bank_id || null,
       assigned_broker_id: req.body.assigned_broker_id || null,
@@ -164,30 +157,20 @@ export const createLoan = async (req, res) => {
       financier_name: req.body.financier_name || null,
       sanction_amount: req.body.sanction_amount || null,
       sanction_date: req.body.sanction_date || null,
-      
-      // Insurance Details
       insurance_company_name: req.body.insurance_company_name || null,
       premium_amount: req.body.premium_amount || null,
       insurance_date: req.body.insurance_date || null,
       insurance_policy_number: req.body.insurance_policy_number || null,
-      
-      // Deduction & Disbursement
       total_deduction: req.body.total_deduction || null,
       net_disbursement_amount: req.body.net_disbursement_amount || null,
       payment_received_date: req.body.payment_received_date || null,
-      
-      // RTO Details
       rc_owner_name: req.body.rc_owner_name || null,
       rto_agent_name: req.body.rto_agent_name || null,
       agent_mobile_no: req.body.agent_mobile_no || null,
-      
-      // Other Details
       login_date: req.body.login_date || null,
       approval_date: req.body.approval_date || null,
       sourcing_person_name: req.body.sourcing_person_name || null,
       remark: req.body.remark || null,
-      
-      // System Fields
       status: req.body.status || 'pending',
       disbursement_date: req.body.disbursement_date || null,
       pdd: req.body.pdd || null,
@@ -195,17 +178,15 @@ export const createLoan = async (req, res) => {
       created_by: req.user.id
     };
     
-    // Filter out undefined values and build query
+    // Filter: remove undefined AND columns that don't exist in table
     const filteredData = Object.fromEntries(
-      Object.entries(loanData).filter(([key, value]) => value !== undefined)
+      Object.entries(loanData)
+        .filter(([key, value]) => value !== undefined && existingColumns.includes(key))
     );
     
     const keys = Object.keys(filteredData);
     const values = Object.values(filteredData);
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
-    
-    console.log('Inserting loan with keys:', keys);
-    console.log('Values:', values);
     
     const result = await client.query(
       `INSERT INTO loans (${keys.join(', ')}) VALUES (${placeholders}) RETURNING id, loan_number`,
@@ -220,9 +201,18 @@ export const createLoan = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Loan creation error:', error);
-    console.error('Request body:', req.body);
-    res.status(500).json({ error: error.message });
+    console.error('=== LOAN CREATION ERROR ===');
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    console.error('Error code:', error.code);
+    console.error('Request body:', JSON.stringify(req.body, null, 2));
+    console.error('User:', req.user);
+    console.error('========================');
+    res.status(500).json({ 
+      error: error.message,
+      details: error.code || 'Unknown error',
+      hint: error.hint || null
+    });
   } finally {
     client.release();
   }

@@ -21,6 +21,7 @@ import configRoutes from './routes/config.js';
 import documentRoutes from './routes/documents.js';
 import financierRoutes from './routes/financiers.js';
 import customerPortalRoutes from './routes/customerPortal.js';
+import rcVerificationRoutes from './routes/rcVerification.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
@@ -57,6 +58,7 @@ app.use('/api/config', configRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/financiers', financierRoutes);
 app.use('/api/customer-portal', customerPortalRoutes);
+app.use('/api/rc-verification', rcVerificationRoutes);
 
 app.get('/', (req, res) => {
   res.json({

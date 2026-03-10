@@ -2,6 +2,30 @@ import bcrypt from 'bcryptjs';
 import db from '../config/database.js';
 import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
+export const getHierarchyTree = async (req, res) => {
+  try {
+    const query = `
+      WITH RECURSIVE user_tree AS (
+        SELECT id, user_id, full_name, email, role, reporting_to, branch_id
+        FROM users
+        WHERE reporting_to IS NULL
+
+        UNION ALL
+
+        SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id
+        FROM users u
+        INNER JOIN user_tree t ON u.reporting_to = t.id
+      )
+      SELECT * FROM user_tree;
+    `;
+
+    const result = await db.query(query);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getAllUsers = async (req, res) => {
   try {
     let query = `
@@ -12,17 +36,17 @@ export const getAllUsers = async (req, res) => {
       LEFT JOIN branches b ON u.branch_id = b.id
       LEFT JOIN users m ON u.reporting_to = m.id
     `;
-    
+
     const params = [];
-    
+
     // Team leaders can only see their team members
     if (req.user.role === 'team_leader') {
       query += ' WHERE u.reporting_to = $1';
       params.push(req.user.id);
     }
-    
+
     query += ' ORDER BY u.created_at DESC';
-    
+
     const result = await db.query(query, params);
     res.json(result.rows);
   } catch (error) {
@@ -54,36 +78,36 @@ export const createUser = async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    
+
     const { password, role, full_name, email, phone, branch_id } = req.body;
-    
+
     // Managers can only create team_leader and executive roles
     if (req.user.role === 'manager' && !['team_leader', 'executive'].includes(role)) {
       return res.status(403).json({ error: 'Managers can only create team leaders and executives' });
     }
-    
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     // Generate unique user ID
     const seqResult = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
        FROM users 
        FOR UPDATE`
     );
-    
+
     const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
     const initials = (full_name || 'XX').substring(0, 2).toUpperCase();
     const userId = `${initials}-${sequence}`;
-    
+
     const result = await client.query(
       `INSERT INTO users (user_id, full_name, email, password, phone, role, branch_id) 
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, user_id`,
       [userId, full_name, email, hashedPassword, phone || null, role, branch_id || null]
     );
-    
+
     await client.query('COMMIT');
-    res.status(201).json({ 
-      message: 'User created successfully', 
+    res.status(201).json({
+      message: 'User created successfully',
       userId: result.rows[0].id,
       user_id: result.rows[0].user_id
     });
@@ -99,14 +123,14 @@ export const updateUser = async (req, res) => {
   try {
     const { password, role, branch_id, reporting_to, ...userData } = req.body;
     const updates = { ...userData };
-    
+
     if (password) {
       updates.password = await bcrypt.hash(password, 10);
     }
     if (role) updates.role = role;
     if (branch_id !== undefined) updates.branch_id = branch_id;
     if (reporting_to !== undefined) updates.reporting_to = reporting_to;
-    
+
     const { query, values } = buildUpdateQuery('users', updates, req.params.id);
     const result = await db.query(query, values);
     if (result.rowCount === 0) {

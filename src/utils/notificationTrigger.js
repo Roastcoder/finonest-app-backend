@@ -1,5 +1,16 @@
 import db from '../config/database.js';
 
+// Boilerplate for external notifications
+const sendEmail = async (userId, title, message) => {
+  // TODO: Configure Nodemailer / SendGrid here
+  console.log(`[EMAIL] To User ${userId}: ${title} - ${message}`);
+};
+
+const sendSMS = async (userId, message) => {
+  // TODO: Configure Twilio / MSG91 here
+  console.log(`[SMS/WhatsApp] To User ${userId}: ${message}`);
+};
+
 export const createNotification = async (userId, type, title, message, relatedId = null, relatedType = null) => {
   try {
     await db.query(
@@ -7,6 +18,11 @@ export const createNotification = async (userId, type, title, message, relatedId
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [userId, type, title, message, relatedId, relatedType, JSON.stringify(['in_app'])]
     );
+
+    // Trigger external channels
+    await sendEmail(userId, title, message);
+    await sendSMS(userId, message);
+
   } catch (error) {
     console.error('Notification creation failed:', error);
   }

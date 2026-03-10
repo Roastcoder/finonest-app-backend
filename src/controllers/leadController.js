@@ -82,6 +82,17 @@ export const createLead = async (req, res) => {
 
 export const updateLead = async (req, res) => {
   try {
+    // If we're updating the stage, we must track the historical before/after transition
+    if (req.body.stage) {
+      const prev = await db.query('SELECT stage FROM leads WHERE id = $1', [req.params.id]);
+      if (prev.rows.length > 0 && prev.rows[0].stage !== req.body.stage) {
+        await db.query(
+          `INSERT INTO lead_stage_history (lead_id, from_stage, to_stage, changed_by) VALUES ($1, $2, $3, $4)`,
+          [req.params.id, prev.rows[0].stage, req.body.stage, req.user.id]
+        );
+      }
+    }
+
     const { query, values } = buildUpdateQuery('leads', req.body, req.params.id);
     const result = await db.query(query, values);
     if (result.rowCount === 0) {
@@ -100,6 +111,91 @@ export const deleteLead = async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
     res.json({ message: 'Lead deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getCustomerProfile = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM customer_profiles WHERE lead_id = $1',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Customer profile not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const upsertCustomerProfile = async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const existing = await db.query('SELECT id FROM customer_profiles WHERE lead_id = $1', [leadId]);
+
+    if (existing.rows.length === 0) {
+      const { keys, values, params } = toPostgresParams({ ...req.body, lead_id: leadId });
+      const result = await db.query(
+        `INSERT INTO customer_profiles (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+        values
+      );
+      return res.status(201).json({ message: 'Profile created successfully', profileId: result.rows[0].id });
+    } else {
+      const { query, values } = buildUpdateQuery('customer_profiles', req.body, existing.rows[0].id);
+      await db.query(query, values);
+      return res.json({ message: 'Profile updated successfully' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const cloneLead = async (req, res) => {
+  try {
+    const originalLeadId = req.params.id;
+    const { new_financier_id } = req.body;
+
+    const result = await db.query('SELECT * FROM leads WHERE id = $1', [originalLeadId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Lead not found' });
+    const lead = result.rows[0];
+
+    const leadData = {
+      customer_name: lead.customer_name,
+      phone: lead.phone,
+      email: lead.email,
+      current_address: lead.current_address,
+      pincode: lead.pincode,
+      city: lead.city,
+      state: lead.state,
+      pan_number: lead.pan_number,
+      vehicle_number: lead.vehicle_number,
+      loan_amount_required: lead.loan_amount_required,
+      case_type: lead.case_type,
+      lead_type: lead.lead_type,
+      financier_id: new_financier_id || lead.financier_id,
+      assigned_to: lead.assigned_to,
+      stage: 'lead',
+      status: 'new',
+      source: 'Reapplied from Lead ' + originalLeadId,
+      notes: lead.notes,
+    };
+
+    const { keys, values, params } = toPostgresParams(leadData);
+    const createResult = await db.query(
+      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+      values
+    );
+    const newLeadId = createResult.rows[0].id;
+
+    await db.query(
+      `INSERT INTO lead_stage_history (lead_id, to_stage, changed_by) VALUES ($1, $2, $3)`,
+      [newLeadId, 'lead', req.user.id]
+    );
+
+    res.status(201).json({ message: 'Lead cloned successfully for reapplication', leadId: newLeadId });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

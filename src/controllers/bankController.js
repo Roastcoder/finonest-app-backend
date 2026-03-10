@@ -1,9 +1,4 @@
-// This file contains all controller updates for PostgreSQL
-// Copy these to respective controller files
-
-// bankController.js
 import db from '../config/database.js';
-import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getAllBanks = async (req, res) => {
   try {
@@ -28,10 +23,10 @@ export const getBankById = async (req, res) => {
 
 export const createBank = async (req, res) => {
   try {
-    const { keys, values, params } = toPostgresParams(req.body);
+    const { name, code, contact_person, contact_email, contact_phone } = req.body;
     const result = await db.query(
-      `INSERT INTO banks (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
-      values
+      'INSERT INTO banks (name, code, contact_person, contact_email, contact_phone) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [name, code, contact_person, contact_email, contact_phone]
     );
     res.status(201).json({ message: 'Bank created successfully', bankId: result.rows[0].id });
   } catch (error) {
@@ -41,8 +36,11 @@ export const createBank = async (req, res) => {
 
 export const updateBank = async (req, res) => {
   try {
-    const { query, values } = buildUpdateQuery('banks', req.body, req.params.id);
-    const result = await db.query(query, values);
+    const { name, code, contact_person, contact_email, contact_phone } = req.body;
+    const result = await db.query(
+      'UPDATE banks SET name = $1, code = $2, contact_person = $3, contact_email = $4, contact_phone = $5 WHERE id = $6',
+      [name, code, contact_person, contact_email, contact_phone, req.params.id]
+    );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Bank not found' });
     }

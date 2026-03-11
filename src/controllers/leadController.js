@@ -21,12 +21,13 @@ export const getAllLeads = async (req, res) => {
              )) as customer_id,
              COALESCE(u.full_name, u.user_id) as assigned_to_name, 
              b.name as financier_name,
-             br.name as our_branch,
+             COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
              CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON l.financier_id = b.id
-      LEFT JOIN branches br ON u.branch_id = br.id
+      LEFT JOIN users cu ON l.created_by = cu.id
+      LEFT JOIN branches br ON cu.branch_id = br.id
       LEFT JOIN loans ln ON l.id = ln.lead_id
       ORDER BY l.created_at DESC
     `);
@@ -46,12 +47,13 @@ export const getLeadById = async (req, res) => {
              l.city as district,
              COALESCE(u.full_name, u.user_id) as assigned_to_name, 
              b.name as financier_name,
-             br.name as our_branch,
+             COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
              CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON l.financier_id = b.id
-      LEFT JOIN branches br ON u.branch_id = br.id
+      LEFT JOIN users cu ON l.created_by = cu.id
+      LEFT JOIN branches br ON cu.branch_id = br.id
       LEFT JOIN loans ln ON l.id = ln.lead_id
       WHERE l.id = $1
     `, [req.params.id]);

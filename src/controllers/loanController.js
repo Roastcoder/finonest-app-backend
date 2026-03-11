@@ -243,7 +243,7 @@ export const updateLoan = async (req, res) => {
     const loanData = {
       customer_id: req.body.customer_id || null,
       applicant_name: req.body.applicant_name || req.body.customer_name || null,
-      customer_name: req.body.applicant_name || req.body.customer_name || null,
+      customer_name: req.body.applicant_name || req.body.customer_name || 'Unknown Customer',
       mobile: req.body.mobile || req.body.phone || null,
       phone: req.body.mobile || req.body.phone || null,
       email: req.body.email || null,

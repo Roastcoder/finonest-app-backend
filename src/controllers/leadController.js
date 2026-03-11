@@ -1,18 +1,38 @@
 import db from '../config/database.js';
 import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
-import { notifyLeadCreated } from '../utils/notificationTrigger.js';
+// import { notifyLeadCreated } from '../utils/notificationTrigger.js';
+
+// Temporary notification function until proper implementation
+const notifyLeadCreated = async (leadId, assignedTo) => {
+  console.log(`Notification: Lead ${leadId} created and assigned to user ${assignedTo}`);
+};
 
 export const getAllLeads = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT l.*, u.name as assigned_to_name, b.name as financier_name
+      SELECT l.*, 
+             l.phone as phone_no,
+             l.vehicle_number as vehicle_no,
+             l.city as district,
+             COALESCE(l.customer_id, CONCAT(
+               UPPER(SUBSTRING(COALESCE(u.full_name, 'US'), 1, 2)),
+               UPPER(SUBSTRING(COALESCE(l.customer_name, 'C'), 1, 1)),
+               LPAD((ROW_NUMBER() OVER (PARTITION BY l.created_by ORDER BY l.id))::TEXT, 3, '0')
+             )) as customer_id,
+             COALESCE(u.full_name, u.user_id) as assigned_to_name, 
+             b.name as financier_name,
+             br.name as our_branch,
+             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON l.financier_id = b.id
+      LEFT JOIN branches br ON u.branch_id = br.id
+      LEFT JOIN loans ln ON l.id = ln.lead_id
       ORDER BY l.created_at DESC
     `);
     res.json(result.rows);
   } catch (error) {
+    console.error('Get leads error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -20,10 +40,19 @@ export const getAllLeads = async (req, res) => {
 export const getLeadById = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT l.*, u.name as assigned_to_name, b.name as financier_name
+      SELECT l.*, 
+             l.phone as phone_no,
+             l.vehicle_number as vehicle_no,
+             l.city as district,
+             COALESCE(u.full_name, u.user_id) as assigned_to_name, 
+             b.name as financier_name,
+             br.name as our_branch,
+             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON l.financier_id = b.id
+      LEFT JOIN branches br ON u.branch_id = br.id
+      LEFT JOIN loans ln ON l.id = ln.lead_id
       WHERE l.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) {
@@ -31,6 +60,7 @@ export const getLeadById = async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (error) {
+    console.error('Get lead by ID error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -41,7 +71,7 @@ export const createLead = async (req, res) => {
     // Example: JAR001 (John Admin, Rahul, lead #1)
     
     // Get user's name initials (first 2 letters of first name)
-    const userResult = await db.query('SELECT COALESCE(name, full_name, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
+    const userResult = await db.query('SELECT COALESCE(full_name, user_id, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
     const userName = userResult.rows[0]?.user_name || 'User';
     const userInitials = userName.substring(0, 2).toUpperCase();
     
@@ -83,7 +113,12 @@ export const createLead = async (req, res) => {
       follow_up_date: req.body.follow_up_date
     };
 
-    const { keys, values, params } = toPostgresParams(leadData);
+    // Filter out null/undefined values
+    const filteredData = Object.fromEntries(
+      Object.entries(leadData).filter(([_, value]) => value !== null && value !== undefined && value !== '')
+    );
+
+    const { keys, values, params } = toPostgresParams(filteredData);
     const result = await db.query(
       `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id, customer_id`,
       values
@@ -94,8 +129,8 @@ export const createLead = async (req, res) => {
       [result.rows[0].id, 'lead', req.user.id]
     );
 
-    if (leadData.assigned_to) {
-      await notifyLeadCreated(result.rows[0].id, leadData.assigned_to);
+    if (filteredData.assigned_to) {
+      await notifyLeadCreated(result.rows[0].id, filteredData.assigned_to);
     }
 
     res.status(201).json({ 
@@ -104,6 +139,7 @@ export const createLead = async (req, res) => {
       customerId: result.rows[0].customer_id
     });
   } catch (error) {
+    console.error('Lead creation error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -128,6 +164,7 @@ export const updateLead = async (req, res) => {
     }
     res.json({ message: 'Lead updated successfully' });
   } catch (error) {
+    console.error('Update lead error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -140,6 +177,7 @@ export const deleteLead = async (req, res) => {
     }
     res.json({ message: 'Lead deleted successfully' });
   } catch (error) {
+    console.error('Delete lead error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -147,7 +185,7 @@ export const deleteLead = async (req, res) => {
 export const getCustomerProfile = async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM customer_profiles WHERE lead_id = $1',
+      'SELECT * FROM customer_portal_access WHERE lead_id = $1',
       [req.params.id]
     );
     if (result.rows.length === 0) {
@@ -155,6 +193,7 @@ export const getCustomerProfile = async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (error) {
+    console.error('Get customer profile error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -162,21 +201,22 @@ export const getCustomerProfile = async (req, res) => {
 export const upsertCustomerProfile = async (req, res) => {
   try {
     const leadId = req.params.id;
-    const existing = await db.query('SELECT id FROM customer_profiles WHERE lead_id = $1', [leadId]);
+    const existing = await db.query('SELECT id FROM customer_portal_access WHERE lead_id = $1', [leadId]);
 
     if (existing.rows.length === 0) {
       const { keys, values, params } = toPostgresParams({ ...req.body, lead_id: leadId });
       const result = await db.query(
-        `INSERT INTO customer_profiles (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+        `INSERT INTO customer_portal_access (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
         values
       );
       return res.status(201).json({ message: 'Profile created successfully', profileId: result.rows[0].id });
     } else {
-      const { query, values } = buildUpdateQuery('customer_profiles', req.body, existing.rows[0].id);
+      const { query, values } = buildUpdateQuery('customer_portal_access', req.body, existing.rows[0].id);
       await db.query(query, values);
       return res.json({ message: 'Profile updated successfully' });
     }
   } catch (error) {
+    console.error('Upsert customer profile error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -190,7 +230,17 @@ export const cloneLead = async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Lead not found' });
     const lead = result.rows[0];
 
+    // Generate new customer_id for cloned lead
+    const userResult = await db.query('SELECT COALESCE(full_name, user_id, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
+    const userName = userResult.rows[0]?.user_name || 'User';
+    const userInitials = userName.substring(0, 2).toUpperCase();
+    const customerInitial = lead.customer_name.charAt(0).toUpperCase();
+    const countResult = await db.query('SELECT COUNT(*) as count FROM leads WHERE created_by = $1', [req.user.id]);
+    const leadNumber = (parseInt(countResult.rows[0].count) + 1).toString().padStart(3, '0');
+    const customerId = `${userInitials}${customerInitial}${leadNumber}`;
+
     const leadData = {
+      customer_id: customerId,
       customer_name: lead.customer_name,
       phone: lead.phone,
       email: lead.email,
@@ -205,6 +255,7 @@ export const cloneLead = async (req, res) => {
       lead_type: lead.lead_type,
       financier_id: new_financier_id || lead.financier_id,
       assigned_to: lead.assigned_to,
+      created_by: req.user.id,
       stage: 'lead',
       status: 'new',
       source: 'Reapplied from Lead ' + originalLeadId,
@@ -213,7 +264,7 @@ export const cloneLead = async (req, res) => {
 
     const { keys, values, params } = toPostgresParams(leadData);
     const createResult = await db.query(
-      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id, customer_id`,
       values
     );
     const newLeadId = createResult.rows[0].id;
@@ -223,8 +274,13 @@ export const cloneLead = async (req, res) => {
       [newLeadId, 'lead', req.user.id]
     );
 
-    res.status(201).json({ message: 'Lead cloned successfully for reapplication', leadId: newLeadId });
+    res.status(201).json({ 
+      message: 'Lead cloned successfully for reapplication', 
+      leadId: newLeadId,
+      customerId: createResult.rows[0].customer_id
+    });
   } catch (error) {
+    console.error('Clone lead error:', error);
     res.status(500).json({ error: error.message });
   }
 };

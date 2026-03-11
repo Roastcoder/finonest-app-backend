@@ -24,6 +24,7 @@ import customerPortalRoutes from './routes/customerPortal.js';
 import rcVerificationRoutes from './routes/rcVerification.js';
 import accountantRoutes from './routes/accountant.js';
 import integrationRoutes from './routes/integrations.js';
+import timelineRoutes from './routes/timeline.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
@@ -63,6 +64,7 @@ app.use('/api/customer-portal', customerPortalRoutes);
 app.use('/api/rc-verification', rcVerificationRoutes);
 app.use('/api/accountant', accountantRoutes);
 app.use('/api/integrations', integrationRoutes);
+app.use('/api/timeline', timelineRoutes);
 
 app.get('/', (req, res) => {
   res.json({

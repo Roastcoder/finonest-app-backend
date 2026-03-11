@@ -79,11 +79,25 @@ export const createUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { password, role, full_name, email, phone, branch_id } = req.body;
+    const { password, role, full_name, email, phone, branch_id, reporting_to } = req.body;
 
-    // Managers can only create team_leader and executive roles
+    // Validation
+    if (!password || !role || !full_name || !email) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Password, role, full name, and email are required' });
+    }
+
+    // Role-based permissions
     if (req.user.role === 'manager' && !['team_leader', 'executive'].includes(role)) {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Managers can only create team leaders and executives' });
+    }
+
+    // Check if email already exists
+    const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Email already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -99,10 +113,23 @@ export const createUser = async (req, res) => {
     const initials = (full_name || 'XX').substring(0, 2).toUpperCase();
     const userId = `${initials}-${sequence}`;
 
+    const userData = {
+      user_id: userId,
+      full_name,
+      email,
+      password: hashedPassword,
+      phone: phone || null,
+      role,
+      branch_id: branch_id || null,
+      reporting_to: reporting_to || null,
+      joining_date: new Date().toISOString().split('T')[0],
+      status: 'active'
+    };
+
+    const { keys, values, params } = toPostgresParams(userData);
     const result = await client.query(
-      `INSERT INTO users (user_id, full_name, email, password, phone, role, branch_id) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, user_id`,
-      [userId, full_name, email, hashedPassword, phone || null, role, branch_id || null]
+      `INSERT INTO users (${keys.join(', ')}) VALUES (${params}) RETURNING id, user_id`,
+      values
     );
 
     await client.query('COMMIT');
@@ -113,6 +140,10 @@ export const createUser = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
+    console.error('Create user error:', error);
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'Email or user ID already exists' });
+    }
     res.status(500).json({ error: error.message });
   } finally {
     client.release();
@@ -138,18 +169,35 @@ export const updateUser = async (req, res) => {
     }
     res.json({ message: 'User updated successfully' });
   } catch (error) {
+    console.error('Update user error:', error);
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
     res.status(500).json({ error: error.message });
   }
 };
 
 export const deleteUser = async (req, res) => {
   try {
+    // Check if user has any dependencies
+    const dependencies = await db.query(
+      'SELECT COUNT(*) as count FROM users WHERE reporting_to = $1',
+      [req.params.id]
+    );
+    
+    if (dependencies.rows[0].count > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete user with team members. Please reassign team members first.' 
+      });
+    }
+
     const result = await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
+    console.error('Delete user error:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -1,1 +1,86 @@
-import express from 'express';\nimport { authenticate } from '../middleware/auth.js';\n\nconst router = express.Router();\n\nrouter.use(authenticate);\n\n// Get field permissions for current user\nrouter.get('/', async (req, res) => {\n  try {\n    // Default field permissions based on user role\n    const permissions = {\n      admin: {\n        leads: { read: true, write: true, delete: true },\n        loans: { read: true, write: true, delete: true },\n        users: { read: true, write: true, delete: true },\n        banks: { read: true, write: true, delete: true },\n        reports: { read: true, write: true, delete: false },\n        dashboard: { read: true, write: false, delete: false }\n      },\n      manager: {\n        leads: { read: true, write: true, delete: false },\n        loans: { read: true, write: true, delete: false },\n        users: { read: true, write: false, delete: false },\n        banks: { read: true, write: false, delete: false },\n        reports: { read: true, write: false, delete: false },\n        dashboard: { read: true, write: false, delete: false }\n      },\n      team_leader: {\n        leads: { read: true, write: true, delete: false },\n        loans: { read: true, write: true, delete: false },\n        users: { read: true, write: false, delete: false },\n        banks: { read: true, write: false, delete: false },\n        reports: { read: true, write: false, delete: false },\n        dashboard: { read: true, write: false, delete: false }\n      },\n      executive: {\n        leads: { read: true, write: true, delete: false },\n        loans: { read: true, write: true, delete: false },\n        users: { read: false, write: false, delete: false },\n        banks: { read: true, write: false, delete: false },\n        reports: { read: false, write: false, delete: false },\n        dashboard: { read: true, write: false, delete: false }\n      },\n      accountant: {\n        leads: { read: true, write: false, delete: false },\n        loans: { read: true, write: true, delete: false },\n        users: { read: false, write: false, delete: false },\n        banks: { read: true, write: false, delete: false },\n        reports: { read: true, write: false, delete: false },\n        dashboard: { read: true, write: false, delete: false }\n      }\n    };\n\n    const userRole = req.user.role || 'executive';\n    const userPermissions = permissions[userRole] || permissions.executive;\n\n    res.json({\n      role: userRole,\n      permissions: userPermissions,\n      userId: req.user.id,\n      userName: req.user.full_name || req.user.user_id\n    });\n  } catch (error) {\n    console.error('Get field permissions error:', error);\n    res.status(500).json({ error: error.message });\n  }\n});\n\n// Update field permissions (admin only)\nrouter.put('/', async (req, res) => {\n  try {\n    if (req.user.role !== 'admin') {\n      return res.status(403).json({ error: 'Only admins can update field permissions' });\n    }\n\n    // In a real implementation, you would save these to database\n    // For now, just return success\n    res.json({ message: 'Field permissions updated successfully' });\n  } catch (error) {\n    console.error('Update field permissions error:', error);\n    res.status(500).json({ error: error.message });\n  }\n});\n\nexport default router;
+import express from 'express';
+import { authenticate } from '../middleware/auth.js';
+
+const router = express.Router();
+
+router.use(authenticate);
+
+// Get field permissions for current user
+router.get('/', async (req, res) => {
+  try {
+    // Default field permissions based on user role
+    const permissions = {
+      admin: {
+        leads: { read: true, write: true, delete: true },
+        loans: { read: true, write: true, delete: true },
+        users: { read: true, write: true, delete: true },
+        banks: { read: true, write: true, delete: true },
+        reports: { read: true, write: true, delete: false },
+        dashboard: { read: true, write: false, delete: false }
+      },
+      manager: {
+        leads: { read: true, write: true, delete: false },
+        loans: { read: true, write: true, delete: false },
+        users: { read: true, write: false, delete: false },
+        banks: { read: true, write: false, delete: false },
+        reports: { read: true, write: false, delete: false },
+        dashboard: { read: true, write: false, delete: false }
+      },
+      team_leader: {
+        leads: { read: true, write: true, delete: false },
+        loans: { read: true, write: true, delete: false },
+        users: { read: true, write: false, delete: false },
+        banks: { read: true, write: false, delete: false },
+        reports: { read: true, write: false, delete: false },
+        dashboard: { read: true, write: false, delete: false }
+      },
+      executive: {
+        leads: { read: true, write: true, delete: false },
+        loans: { read: true, write: true, delete: false },
+        users: { read: false, write: false, delete: false },
+        banks: { read: true, write: false, delete: false },
+        reports: { read: false, write: false, delete: false },
+        dashboard: { read: true, write: false, delete: false }
+      },
+      accountant: {
+        leads: { read: true, write: false, delete: false },
+        loans: { read: true, write: true, delete: false },
+        users: { read: false, write: false, delete: false },
+        banks: { read: true, write: false, delete: false },
+        reports: { read: true, write: false, delete: false },
+        dashboard: { read: true, write: false, delete: false }
+      }
+    };
+
+    const userRole = req.user.role || 'executive';
+    const userPermissions = permissions[userRole] || permissions.executive;
+
+    res.json({
+      role: userRole,
+      permissions: userPermissions,
+      userId: req.user.id,
+      userName: req.user.full_name || req.user.user_id
+    });
+  } catch (error) {
+    console.error('Get field permissions error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update field permissions (admin only)
+router.put('/', async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update field permissions' });
+    }
+
+    // In a real implementation, you would save these to database
+    // For now, just return success
+    res.json({ message: 'Field permissions updated successfully' });
+  } catch (error) {
+    console.error('Update field permissions error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;

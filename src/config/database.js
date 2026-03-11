@@ -5,27 +5,22 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Ensure we have the required environment variables
-if (!process.env.DATABASE_URL && (!process.env.DB_HOST || !process.env.DB_USER || !process.env.DB_NAME)) {
-  console.error('❌ Missing required database configuration');
-  console.error('Required: DATABASE_URL or (DB_HOST, DB_USER, DB_NAME)');
+// Ensure we have the DATABASE_URL
+if (!process.env.DATABASE_URL) {
+  console.error('❌ DATABASE_URL is required');
+  console.error('Current DATABASE_URL:', process.env.DATABASE_URL);
   process.exit(1);
 }
 
-// Create pool with explicit configuration
+// Force TCP connection by ONLY using connectionString
+// Do NOT provide individual host/port/user parameters to prevent local socket connection
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Fallback to individual parameters if connectionString fails
-  host: process.env.DB_HOST,
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
   ssl: false,
   // Connection pool settings
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
 });
 
 pool.on('error', (err) => {
@@ -36,16 +31,11 @@ pool.on('error', (err) => {
 pool.connect((err, client, release) => {
   if (err) {
     console.error('❌ Database connection failed:', err.message);
-    console.error('Connection details:', {
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT,
-      database: process.env.DB_NAME,
-      user: process.env.DB_USER,
-      hasPassword: !!process.env.DB_PASSWORD,
-      connectionString: process.env.DATABASE_URL ? 'Present' : 'Missing'
-    });
+    console.error('❌ Error code:', err.code);
+    console.error('❌ DATABASE_URL:', process.env.DATABASE_URL ? 'Present' : 'Missing');
+    // Don't exit the process, let it retry
   } else {
-    console.log('✅ Database connected successfully to:', process.env.DB_HOST || 'connection string');
+    console.log('✅ Database connected successfully via connection string');
     release();
   }
 });

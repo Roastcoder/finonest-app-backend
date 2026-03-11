@@ -42,9 +42,9 @@ export const getAllExpenses = async (req, res) => {
   try {
     let query = `
       SELECT e.*, 
-        u.name as employee_name, 
+        COALESCE(u.full_name, u.user_id) as employee_name, 
         u.role as employee_role,
-        a.name as approved_by_name
+        COALESCE(a.full_name, a.user_id) as approved_by_name
       FROM expenses e
       JOIN users u ON e.employee_id = u.id
       LEFT JOIN users a ON e.approved_by = a.id
@@ -55,8 +55,8 @@ export const getAllExpenses = async (req, res) => {
     
     // Filter based on user role
     if (req.user.role === 'manager' || req.user.role === 'sales_manager') {
-      // Managers see: their own expenses OR expenses they created OR expenses from their team members
-      conditions.push(`(e.employee_id = $${params.length + 1} OR e.created_by = $${params.length + 1} OR u.reporting_to = $${params.length + 1})`);
+      // Managers see: their own expenses OR expenses from their team members
+      conditions.push(`(e.employee_id = $${params.length + 1} OR u.reporting_to = $${params.length + 1})`);
       params.push(req.user.id);
     } else if (req.user.role === 'dsa' || req.user.role === 'executive') {
       // DSA/Executives see only their own expenses
@@ -74,6 +74,7 @@ export const getAllExpenses = async (req, res) => {
     const result = await db.query(query, params);
     res.json(result.rows);
   } catch (error) {
+    console.error('Get expenses error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -82,13 +83,12 @@ export const createExpense = async (req, res) => {
   try {
     const data = {
       expense_type: req.body.expense_type,
-      employee_id: req.body.employee_id,
+      employee_id: req.body.employee_id || req.user.id,
       description: req.body.description,
       amount: req.body.amount,
       expense_date: req.body.expense_date,
       document_path: req.file ? req.file.path : null,
-      status: 'pending',
-      created_by: req.user.id
+      status: 'pending'
     };
     
     const { keys, values, params } = toPostgresParams(data);
@@ -98,6 +98,7 @@ export const createExpense = async (req, res) => {
     );
     res.status(201).json({ message: 'Expense submitted successfully', expenseId: result.rows[0].id });
   } catch (error) {
+    console.error('Create expense error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -130,6 +131,7 @@ export const approveExpense = async (req, res) => {
     );
     res.json({ message: 'Expense approved successfully' });
   } catch (error) {
+    console.error('Approve expense error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -162,6 +164,7 @@ export const rejectExpense = async (req, res) => {
     );
     res.json({ message: 'Expense rejected successfully' });
   } catch (error) {
+    console.error('Reject expense error:', error);
     res.status(500).json({ error: error.message });
   }
 };

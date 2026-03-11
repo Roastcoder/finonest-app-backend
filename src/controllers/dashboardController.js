@@ -4,6 +4,7 @@ export const getDashboardStats = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
     const dateFilter = startDate && endDate ? 'AND created_at BETWEEN $1 AND $2' : '';
+    const params = startDate && endDate ? [startDate, endDate] : [];
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
 
     // Bank wise login
@@ -88,6 +89,7 @@ export const getDashboardStats = async (req, res) => {
       inProcessTags: inProcessTags.rows
     });
   } catch (error) {
+    console.error('Dashboard stats error:', error);
     res.status(500).json({ error: error.message });
   }
 };

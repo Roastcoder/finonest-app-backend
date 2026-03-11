@@ -37,7 +37,30 @@ export const getLeadById = async (req, res) => {
 
 export const createLead = async (req, res) => {
   try {
+    // Generate customer_id: User initials (2) + Customer initials (1) + Sequential number (3)
+    // Example: JAR001 (John Admin, Rahul, lead #1)
+    
+    // Get user's name initials (first 2 letters of first name)
+    const userResult = await db.query('SELECT COALESCE(name, full_name, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
+    const userName = userResult.rows[0]?.user_name || 'User';
+    const userInitials = userName.substring(0, 2).toUpperCase();
+    
+    // Get customer name initial (first letter of first name)
+    const customerName = req.body.customer_name || 'Customer';
+    const customerInitial = customerName.charAt(0).toUpperCase();
+    
+    // Get next sequential number for this user
+    const countResult = await db.query(
+      'SELECT COUNT(*) as count FROM leads WHERE created_by = $1',
+      [req.user.id]
+    );
+    const leadNumber = (parseInt(countResult.rows[0].count) + 1).toString().padStart(3, '0');
+    
+    // Format: XXYZZZ (2 user initials + 1 customer initial + 3 digit number) = 6 characters
+    const customerId = `${userInitials}${customerInitial}${leadNumber}`;
+
     const leadData = {
+      customer_id: customerId,
       customer_name: req.body.customer_name,
       phone: req.body.phone,
       email: req.body.email,
@@ -52,6 +75,7 @@ export const createLead = async (req, res) => {
       lead_type: req.body.lead_type,
       financier_id: req.body.financier_id,
       assigned_to: req.user.role === 'executive' ? req.user.id : req.body.assigned_to,
+      created_by: req.user.id,
       stage: 'lead',
       status: 'new',
       source: req.body.source,
@@ -61,7 +85,7 @@ export const createLead = async (req, res) => {
 
     const { keys, values, params } = toPostgresParams(leadData);
     const result = await db.query(
-      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id, customer_id`,
       values
     );
 
@@ -74,7 +98,11 @@ export const createLead = async (req, res) => {
       await notifyLeadCreated(result.rows[0].id, leadData.assigned_to);
     }
 
-    res.status(201).json({ message: 'Lead created successfully', leadId: result.rows[0].id });
+    res.status(201).json({ 
+      message: 'Lead created successfully', 
+      leadId: result.rows[0].id,
+      customerId: result.rows[0].customer_id
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

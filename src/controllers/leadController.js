@@ -20,11 +20,13 @@ export const getAllLeads = async (req, res) => {
                LPAD((ROW_NUMBER() OVER (PARTITION BY l.created_by ORDER BY l.id))::TEXT, 3, '0')
              )) as customer_id,
              COALESCE(u.full_name, u.user_id) as assigned_to_name, 
+             COALESCE(creator.full_name, creator.user_id) as created_by_name,
              b.name as financier_name,
              COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
              CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN users creator ON l.created_by = creator.id
       LEFT JOIN banks b ON l.financier_id = b.id
       LEFT JOIN users cu ON l.created_by = cu.id
       LEFT JOIN branches br ON cu.branch_id = br.id
@@ -46,11 +48,13 @@ export const getLeadById = async (req, res) => {
              l.vehicle_number as vehicle_no,
              l.city as district,
              COALESCE(u.full_name, u.user_id) as assigned_to_name, 
+             COALESCE(creator.full_name, creator.user_id) as created_by_name,
              b.name as financier_name,
              COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
              CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN users creator ON l.created_by = creator.id
       LEFT JOIN banks b ON l.financier_id = b.id
       LEFT JOIN users cu ON l.created_by = cu.id
       LEFT JOIN branches br ON cu.branch_id = br.id
@@ -108,6 +112,7 @@ export const createLead = async (req, res) => {
       financier_id: req.body.financier_id,
       assigned_to: req.user.role === 'executive' ? req.user.id : req.body.assigned_to,
       created_by: req.user.id,
+      sourcing_person_name: userName,
       stage: 'lead',
       status: 'new',
       source: req.body.source,

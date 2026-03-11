@@ -5,17 +5,13 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Ensure we have the DATABASE_URL
-if (!process.env.DATABASE_URL) {
-  console.error('❌ DATABASE_URL is required');
-  console.error('Current DATABASE_URL:', process.env.DATABASE_URL);
-  process.exit(1);
-}
-
-// Force TCP connection by ONLY using connectionString
-// Do NOT provide individual host/port/user parameters to prevent local socket connection
+// Use individual connection parameters instead of DATABASE_URL
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: process.env.DB_HOST || '72.61.238.231',
+  port: parseInt(process.env.DB_PORT) || 3000,
+  database: process.env.DB_NAME || 'board',
+  user: process.env.DB_USER || 'Board',
+  password: process.env.DB_PASSWORD || 'Sanam@28',
   ssl: false,
   // Connection pool settings
   max: 20,
@@ -32,10 +28,15 @@ pool.connect((err, client, release) => {
   if (err) {
     console.error('❌ Database connection failed:', err.message);
     console.error('❌ Error code:', err.code);
-    console.error('❌ DATABASE_URL:', process.env.DATABASE_URL ? 'Present' : 'Missing');
-    // Don't exit the process, let it retry
+    console.error('❌ Connection details:', {
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER
+    });
   } else {
-    console.log('✅ Database connected successfully via connection string');
+    console.log('✅ Database connected successfully via TCP connection');
+    console.log('✅ Connected to:', `${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
     release();
   }
 });

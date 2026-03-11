@@ -25,6 +25,7 @@ import rcVerificationRoutes from './routes/rcVerification.js';
 import accountantRoutes from './routes/accountant.js';
 import integrationRoutes from './routes/integrations.js';
 import timelineRoutes from './routes/timeline.js';
+import fieldPermissionRoutes from './routes/fieldPermissions.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
@@ -49,6 +50,7 @@ app.use('/api/leads', leadRoutes);
 app.use('/api/commissions', commissionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/branches', branchRoutes);
+app.use('/api/field-permissions', fieldPermissionRoutes);
 
 // New PRD Modules
 app.use('/api/expenses', expenseRoutes);

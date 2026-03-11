@@ -190,9 +190,18 @@ export const getCustomerProfile = async (req, res) => {
       'SELECT * FROM customer_portal_access WHERE lead_id = $1',
       [req.params.id]
     );
+    
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Customer profile not found' });
+      // Return empty profile instead of 404
+      return res.json({
+        lead_id: req.params.id,
+        customer_phone: null,
+        access_token: null,
+        last_login: null,
+        created_at: null
+      });
     }
+    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Get customer profile error:', error);

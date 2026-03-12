@@ -13,10 +13,24 @@ import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Test routes without auth
+router.get('/test', (req, res) => res.json({ message: 'Documents route working' }));
+router.get('/debug/:id', (req, res) => {
+  res.json({ 
+    message: 'Debug route working', 
+    id: req.params.id,
+    route: `/api/documents/${req.params.id}/debug`,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Public download route for testing
+router.get('/:id/download-test', downloadDocument);
+
+// Protected routes
 router.use(authenticate);
 
 router.get('/', getAllDocuments);
-router.get('/test', (req, res) => res.json({ message: 'Documents route working' }));
 router.get('/lead/:leadId', getDocumentsByLead);
 router.get('/:id/download', downloadDocument);
 router.get('/:id', getDocumentById);

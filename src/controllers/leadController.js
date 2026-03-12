@@ -49,21 +49,21 @@ export const getAllLeads = async (req, res) => {
       // Managers see leads from their team leaders and all their team members
       query += `
         WHERE l.assigned_to IN (
-          WITH RECURSIVE team_members AS (
+          WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $1
             UNION ALL
             SELECT u.id FROM users u
-            INNER JOIN team_members t ON u.reporting_to = t.id
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
           )
-          SELECT id FROM team_members
+          SELECT id FROM team_hierarchy
         ) OR l.created_by IN (
-          WITH RECURSIVE team_members AS (
+          WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $1
             UNION ALL
             SELECT u.id FROM users u
-            INNER JOIN team_members t ON u.reporting_to = t.id
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
           )
-          SELECT id FROM team_members
+          SELECT id FROM team_hierarchy
         )
       `;
       params.push(req.user.id);
@@ -118,21 +118,21 @@ export const getLeadById = async (req, res) => {
       // Managers can access leads from their team leaders and all their team members
       query += ` AND (
         l.assigned_to IN (
-          WITH RECURSIVE team_members AS (
+          WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $2
             UNION ALL
             SELECT u.id FROM users u
-            INNER JOIN team_members t ON u.reporting_to = t.id
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
           )
-          SELECT id FROM team_members
+          SELECT id FROM team_hierarchy
         ) OR l.created_by IN (
-          WITH RECURSIVE team_members AS (
+          WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $2
             UNION ALL
             SELECT u.id FROM users u
-            INNER JOIN team_members t ON u.reporting_to = t.id
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
           )
-          SELECT id FROM team_members
+          SELECT id FROM team_hierarchy
         )
       )`;
       params.push(req.user.id);

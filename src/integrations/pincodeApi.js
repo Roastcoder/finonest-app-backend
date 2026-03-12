@@ -1,5 +1,8 @@
 import fetch from 'node-fetch';
 
+// Ensure fetch is properly imported for ESM
+const fetchModule = fetch.default || fetch;
+
 export const getPincodeDetails = async (req, res) => {
     try {
         const { pincode } = req.params;
@@ -7,7 +10,7 @@ export const getPincodeDetails = async (req, res) => {
             return res.status(400).json({ error: 'Invalid Pincode format' });
         }
 
-        const response = await fetch(`https://api.postalpincode.in/pincode/${pincode}`);
+        const response = await fetchModule(`https://api.postalpincode.in/pincode/${pincode}`);
         const data = await response.json();
 
         if (data && data[0] && data[0].Status === 'Success') {

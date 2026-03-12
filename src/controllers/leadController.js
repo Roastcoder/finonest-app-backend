@@ -42,6 +42,10 @@ export const getAllLeads = async (req, res) => {
 
 export const getLeadById = async (req, res) => {
   try {
+    console.log('Fetching lead with ID:', req.params.id);
+    console.log('User role:', req.user?.role);
+    console.log('User ID:', req.user?.id);
+    
     const result = await db.query(`
       SELECT l.*, 
              l.phone as phone_no,
@@ -61,12 +65,19 @@ export const getLeadById = async (req, res) => {
       LEFT JOIN loans ln ON l.id = ln.lead_id
       WHERE l.id = $1
     `, [req.params.id]);
+    
+    console.log('Query result rows:', result.rows.length);
+    
     if (result.rows.length === 0) {
+      console.log('Lead not found for ID:', req.params.id);
       return res.status(404).json({ error: 'Lead not found' });
     }
+    
+    console.log('Returning lead data for ID:', req.params.id);
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Get lead by ID error:', error);
+    console.error('Get lead by ID error:', error.message);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
 };

@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllUsers, getUserById, createUser, updateUser, deleteUser, searchUser, getTeamMembers, getHierarchyTree } from '../controllers/userController.js';
+import { getAllUsers, getUserById, createUser, updateUser, deleteUser, searchUser, getTeamMembers, getHierarchyTree, getManagerTeamHierarchy } from '../controllers/userController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 
@@ -8,6 +8,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/hierarchy', authorize('admin', 'ops_team', 'sales_manager', 'team_leader'), getHierarchyTree);
+router.get('/my-team/hierarchy', authorize('manager'), getManagerTeamHierarchy);
 router.get('/', authorize('admin', 'manager', 'team_leader'), getAllUsers);
 router.get('/search', authorize('admin', 'manager', 'team_leader'), searchUser);
 router.get('/team/:leaderId', authorize('admin', 'manager', 'team_leader'), getTeamMembers);

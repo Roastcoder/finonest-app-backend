@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import { buildUpdateQuery } from '../utils/postgres.js';
+import { APPLICATION_STAGES } from './applicationStageController.js';
 
 export const getAllLoans = async (req, res) => {
   try {
@@ -165,6 +166,7 @@ export const createLoan = async (req, res) => {
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
       loan_amount: req.body.loan_amount || 0,
+      application_stage: APPLICATION_STAGES.SUBMITTED,
       ltv: req.body.ltv || null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,
       vehicle_number: req.body.vehicle_number || null,
@@ -217,6 +219,7 @@ export const createLoan = async (req, res) => {
       sourcing_person_name: req.body.sourcing_person_name || null,
       remark: req.body.remark || null,
       status: req.body.status || 'pending',
+      application_stage: req.body.application_stage || APPLICATION_STAGES.SUBMITTED,
       disbursement_date: req.body.disbursement_date || null,
       pdd: req.body.pdd || null,
       assigned_to: req.body.assigned_to || null,

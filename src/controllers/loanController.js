@@ -22,14 +22,9 @@ export const getAllLoans = async (req, res) => {
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
-      // Team leader apni aur apne team members ki loans dekhega
-      const teamResult = await db.query(
-        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
-        [req.user.id]
-      );
-      const teamIds = teamResult.rows.map(r => r.id);
-      conditions.push(`l.created_by = ANY($1)`);
-      values.push(teamIds);
+      // Team leader sirf apni loans dekhega
+      conditions.push('l.created_by = $1');
+      values.push(req.user.id);
     }
     // Admin/others ke liye koi filter nahi
     
@@ -73,13 +68,8 @@ export const getLoanById = async (req, res) => {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
-      const teamResult = await db.query(
-        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
-        [req.user.id]
-      );
-      const teamIds = teamResult.rows.map(r => r.id);
-      query += ' AND l.created_by = ANY($2)';
-      values.push(teamIds);
+      query += ' AND l.created_by = $2';
+      values.push(req.user.id);
     }
     
     console.log('Executing query:', query);

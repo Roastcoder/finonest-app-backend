@@ -50,18 +50,55 @@ export const getAllLoans = async (req, res) => {
 
 export const getLoanById = async (req, res) => {
   try {
-    const result = await db.query(
-      'SELECT * FROM loans WHERE id = $1',
-      [req.params.id]
-    );
+    console.log('Fetching loan with ID:', req.params.id);
+    console.log('User role:', req.user?.role);
+    console.log('User ID:', req.user?.id);
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Loan not found' });
+    let query = `
+      SELECT l.*, 
+             COALESCE(u.full_name, u.user_id) as assigned_to_name,
+             b.name as bank_name,
+             br.name as broker_name
+      FROM loans l
+      LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
+      LEFT JOIN brokers br ON COALESCE(l.assigned_broker_id, l.broker_id) = br.id
+      WHERE l.id = $1
+    `;
+    
+    const values = [req.params.id];
+    
+    // Apply role-based filtering for loan detail view
+    if (req.user.role === 'executive') {
+      query += ' AND l.created_by = $2';
+      values.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
+      const teamResult = await db.query(
+        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
+        [req.user.id]
+      );
+      const teamIds = teamResult.rows.map(r => r.id);
+      query += ' AND l.created_by = ANY($2)';
+      values.push(teamIds);
     }
     
+    console.log('Executing query:', query);
+    console.log('With values:', values);
+    
+    const result = await db.query(query, values);
+    
+    console.log('Query result rows:', result.rows.length);
+    
+    if (result.rows.length === 0) {
+      console.log('Loan not found or access denied for ID:', req.params.id);
+      return res.status(404).json({ error: 'Loan not found or access denied' });
+    }
+    
+    console.log('Returning loan data for ID:', req.params.id);
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Get loan by ID error:', error.message);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -137,10 +174,6 @@ export const createLoan = async (req, res) => {
       monthly_income: req.body.monthly_income || null,
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
-      sales_manager: req.body.sales_manager || null,
-      current_landmark: req.body.current_landmark || null,
-      current_state: req.body.current_state || null,
-      permanent_state: req.body.permanent_state || null,
       loan_amount: req.body.loan_amount || 0,
       ltv: req.body.ltv || null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,
@@ -153,7 +186,6 @@ export const createLoan = async (req, res) => {
       maker_model: req.body.maker_model || null,
       model_variant_name: req.body.model_variant_name || null,
       fuel_type: req.body.fuel_type || null,
-      mfg_year: req.body.mfg_year || null,
       manufacturing_date: req.body.manufacturing_date || null,
       ownership_type: req.body.ownership_type || null,
       financer: req.body.financer || null,
@@ -285,10 +317,6 @@ export const updateLoan = async (req, res) => {
       monthly_income: req.body.monthly_income ? Number(req.body.monthly_income) : null,
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
-      sales_manager: req.body.sales_manager || null,
-      current_landmark: req.body.current_landmark || null,
-      current_state: req.body.current_state || null,
-      permanent_state: req.body.permanent_state || null,
       loan_amount: req.body.loan_amount ? Number(req.body.loan_amount) : null,
       ltv: req.body.ltv ? Number(req.body.ltv) : null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,

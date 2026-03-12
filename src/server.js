@@ -29,6 +29,8 @@ import fieldPermissionRoutes from './routes/fieldPermissions.js';
 import applicationStageRoutes from './routes/applicationStages.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import applicationStageJobs from './utils/applicationStageJobs.js';
+import simpleScheduler from './utils/simpleScheduler.js';
 
 dotenv.config();
 
@@ -86,6 +88,19 @@ app.get('/api/health', (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  
+  // Initialize application stage jobs
+  try {
+    // Use simple scheduler (no external dependencies)
+    await simpleScheduler.initializeSimpleScheduler();
+    console.log('✅ Application stage jobs initialized with simple scheduler');
+    
+    // Alternative: Use node-cron based scheduler (requires node-cron package)
+    // await applicationStageJobs.initializeApplicationStageJobs();
+    // console.log('✅ Application stage jobs initialized with cron scheduler');
+  } catch (error) {
+    console.error('❌ Failed to initialize application stage jobs:', error);
+  }
 });

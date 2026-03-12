@@ -1,25 +1,29 @@
-import pg from 'pg';
-import dotenv from 'dotenv';
+import db from './src/config/database.js';
 import fs from 'fs';
-
-dotenv.config();
-
-const { Pool } = pg;
-
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT || 5432,
-  database: process.env.DB_NAME,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  ssl: false
-});
+import path from 'path';
 
 async function runMigration() {
   try {
-    console.log('Running migration...');
-    const sql = fs.readFileSync('./migration_add_user_fields.sql', 'utf8');
-    await pool.query(sql);
+    console.log('Running database migration for application stages...');
+    
+    const migrationSQL = fs.readFileSync(
+      path.join(process.cwd(), 'migrations', 'add_application_stages.sql'), 
+      'utf8'
+    );
+    
+    // Split by semicolon and execute each statement
+    const statements = migrationSQL
+      .split(';')
+      .map(stmt => stmt.trim())
+      .filter(stmt => stmt && !stmt.startsWith('--') && stmt !== 'COMMIT');
+    
+    for (const statement of statements) {
+      if (statement) {
+        console.log('Executing:', statement.substring(0, 50) + '...');
+        await db.query(statement);
+      }
+    }
+    
     console.log('Migration completed successfully!');
     process.exit(0);
   } catch (error) {

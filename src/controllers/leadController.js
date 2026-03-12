@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
+import leadStatusLogic from '../utils/leadStatusLogic.js';
 // import { notifyLeadCreated } from '../utils/notificationTrigger.js';
 
 // Temporary notification function until proper implementation
@@ -9,7 +10,7 @@ const notifyLeadCreated = async (leadId, assignedTo) => {
 
 export const getAllLeads = async (req, res) => {
   try {
-    let query = `
+  let query = `
       SELECT l.*, 
              l.phone as phone_no,
              l.vehicle_number as vehicle_no,
@@ -23,7 +24,10 @@ export const getAllLeads = async (req, res) => {
              COALESCE(creator.full_name, creator.user_id) as created_by_name,
              b.name as financier_name,
              COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
-             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
+             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan,
+             COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
+             l.stage_data,
+             l.stage_history
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id
@@ -94,7 +98,10 @@ export const getLeadById = async (req, res) => {
              COALESCE(creator.full_name, creator.user_id) as created_by_name,
              b.name as financier_name,
              COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
-             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan
+             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan,
+             COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
+             l.stage_data,
+             l.stage_history
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id
@@ -382,6 +389,83 @@ export const cloneLead = async (req, res) => {
     });
   } catch (error) {
     console.error('Clone lead error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const updateLeadStage = async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const { stage: newStatus, ...statusData } = req.body;
+    
+    const result = await leadStatusLogic.updateLeadStatus(
+      leadId,
+      newStatus,
+      statusData,
+      req.user.id
+    );
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Update lead stage error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getLeadStatusHistory = async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const history = await leadStatusLogic.getLeadStatusHistory(leadId);
+    res.json(history);
+  } catch (error) {
+    console.error('Get lead status history error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getStatusStatistics = async (req, res) => {
+  try {
+    const filters = {
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      assignedTo: req.query.assignedTo
+    };
+    
+    const stats = await leadStatusLogic.getStatusStatistics(filters);
+    res.json(stats);
+  } catch (error) {
+    console.error('Get status statistics error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const validateStatusTransition = async (req, res) => {
+  try {
+    const { currentStatus, newStatus } = req.body;
+    
+    leadStatusLogic.validateStatusTransition(currentStatus, newStatus);
+    
+    res.json({ 
+      valid: true, 
+      message: `Transition from ${currentStatus} to ${newStatus} is valid` 
+    });
+  } catch (error) {
+    res.status(400).json({ 
+      valid: false, 
+      error: error.message 
+    });
+  }
+};
+
+export const runAutoCancellation = async (req, res) => {
+  try {
+    const results = await leadStatusLogic.autoCancelExpiredApprovals();
+    res.json({
+      message: 'Auto-cancellation process completed',
+      results
+    });
+  } catch (error) {
+    console.error('Auto-cancellation error:', error);
     res.status(500).json({ error: error.message });
   }
 };

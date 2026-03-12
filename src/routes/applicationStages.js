@@ -1,24 +1,67 @@
 import express from 'express';
-import { 
-  getLoansWithStages, 
-  updateApplicationStage, 
-  getStageHistory, 
-  getStageStatistics 
-} from '../controllers/applicationStageController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import applicationStageController from '../controllers/applicationStageController.js';
+import { authenticate } from '../middleware/auth.js';
+import { auditLogger } from '../middleware/auditLogger.js';
+import applicationStageValidation from '../middleware/applicationStageValidation.js';
 
 const router = express.Router();
 
-// Get all loans with their application stages
-router.get('/loans-with-stages', authenticateToken, getLoansWithStages);
+router.use(authenticate);
 
-// Update application stage (Admin/Manager only)
-router.put('/loans/:loanId/stage', authenticateToken, updateApplicationStage);
+// Stage Management Routes
+router.put('/:id/stage', 
+  auditLogger('leads', 'UPDATE_APPLICATION_STAGE'),
+  applicationStageValidation.validateLeadAccess,
+  applicationStageValidation.validateStageTransition,
+  applicationStageValidation.validateStageDataFormat,
+  applicationStageValidation.validateStageFields,
+  applicationStageValidation.checkStageUpdatePermissions,
+  applicationStageValidation.preventDuplicateStageUpdate,
+  applicationStageValidation.logStageChange,
+  applicationStageController.updateApplicationStage
+);
 
-// Get stage history for a loan
-router.get('/loans/:loanId/stage-history', authenticateToken, getStageHistory);
+router.get('/:id/stage-history', 
+  applicationStageController.getApplicationStageHistory
+);
 
-// Get stage statistics
-router.get('/stage-statistics', authenticateToken, getStageStatistics);
+router.get('/:id/available-transitions', 
+  applicationStageController.getAvailableTransitions
+);
+
+// Stage Configuration Routes
+router.get('/stage-config/:stage', 
+  applicationStageController.getStageConfiguration
+);
+
+// Analytics Routes
+router.get('/stage-statistics', 
+  applicationStageController.getStageStatistics
+);
+
+router.get('/stage-flow-analytics', 
+  applicationStageController.getStageFlowAnalytics
+);
+
+// Stage-based Lead Queries
+router.get('/by-stage/:stage', 
+  applicationStageController.getLeadsByStage
+);
+
+// Validation Routes
+router.post('/validate-transition', 
+  applicationStageController.validateStageTransition
+);
+
+// Bulk Operations
+router.post('/bulk-update-stages', 
+  auditLogger('leads', 'BULK_UPDATE_STAGES'),
+  applicationStageController.bulkUpdateStages
+);
+
+// System Operations
+router.post('/auto-cancel', 
+  applicationStageController.runAutoCancellation
+);
 
 export default router;

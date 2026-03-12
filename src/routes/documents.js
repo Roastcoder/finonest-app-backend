@@ -16,6 +16,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/', getAllDocuments);
+router.get('/test', (req, res) => res.json({ message: 'Documents route working' }));
 router.get('/lead/:leadId', getDocumentsByLead);
 router.get('/:id/download', downloadDocument);
 router.get('/:id', getDocumentById);

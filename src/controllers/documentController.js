@@ -198,22 +198,57 @@ export const deleteDocument = async (req, res) => {
 
 export const downloadDocument = async (req, res) => {
   try {
+    console.log('Download request for document ID:', req.params.id);
+    
     const result = await db.query(
-      'SELECT file_path, file_name FROM documents WHERE id = $1',
+      'SELECT file_path, file_name, document_type FROM documents WHERE id = $1',
       [req.params.id]
     );
     
     if (result.rows.length === 0) {
+      console.log('Document not found in database:', req.params.id);
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    const { file_path, file_name } = result.rows[0];
+    const { file_path, file_name, document_type } = result.rows[0];
+    console.log('Document found:', { file_path, file_name, document_type });
     
     if (!fs.existsSync(file_path)) {
+      console.log('File not found on filesystem:', file_path);
       return res.status(404).json({ error: 'File not found on server' });
     }
 
-    res.download(file_path, file_name);
+    // Set appropriate content type
+    const ext = path.extname(file_name).toLowerCase();
+    let contentType = 'application/octet-stream';
+    
+    switch (ext) {
+      case '.pdf':
+        contentType = 'application/pdf';
+        break;
+      case '.jpg':
+      case '.jpeg':
+        contentType = 'image/jpeg';
+        break;
+      case '.png':
+        contentType = 'image/png';
+        break;
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${file_name}"`);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(file_path);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (error) => {
+      console.error('File stream error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Error reading file' });
+      }
+    });
+    
   } catch (error) {
     console.error('Download document error:', error);
     res.status(500).json({ error: error.message });

@@ -233,3 +233,39 @@ export const getTeamMembers = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getManagerTeamHierarchy = async (req, res) => {
+  try {
+    const teamLeaders = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      WHERE u.reporting_to = $1 AND u.role = 'team_leader'
+      ORDER BY u.full_name ASC
+    `, [req.user.id]);
+
+    const hierarchy = await Promise.all(
+      teamLeaders.rows.map(async (leader) => {
+        const teamMembers = await db.query(`
+          SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+                 b.name as branch_name
+          FROM users u
+          LEFT JOIN branches b ON u.branch_id = b.id
+          WHERE u.reporting_to = $1
+          ORDER BY u.full_name ASC
+        `, [leader.id]);
+        
+        return {
+          ...leader,
+          team_members: teamMembers.rows
+        };
+      })
+    );
+
+    res.json(hierarchy);
+  } catch (error) {
+    console.error('Get manager team hierarchy error:', error);
+    res.status(500).json({ error: error.message });
+  }
+}

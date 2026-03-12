@@ -9,7 +9,7 @@ const notifyLeadCreated = async (leadId, assignedTo) => {
 
 export const getAllLeads = async (req, res) => {
   try {
-    const result = await db.query(`
+    let query = `
       SELECT l.*, 
              l.phone as phone_no,
              l.vehicle_number as vehicle_no,
@@ -31,8 +31,47 @@ export const getAllLeads = async (req, res) => {
       LEFT JOIN users cu ON l.created_by = cu.id
       LEFT JOIN branches br ON cu.branch_id = br.id
       LEFT JOIN loans ln ON l.id = ln.lead_id
-      ORDER BY l.created_at DESC
-    `);
+    `;
+    
+    const params = [];
+    
+    if (req.user.role === 'team_leader') {
+      // Team leaders see leads assigned to or created by their team members
+      query += `
+        WHERE l.assigned_to IN (
+          SELECT id FROM users WHERE reporting_to = $1
+        ) OR l.created_by IN (
+          SELECT id FROM users WHERE reporting_to = $1
+        )
+      `;
+      params.push(req.user.id);
+    } else if (req.user.role === 'manager') {
+      // Managers see leads from their team leaders and all their team members
+      query += `
+        WHERE l.assigned_to IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $1
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
+        ) OR l.created_by IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $1
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
+        )
+      `;
+      params.push(req.user.id);
+    }
+    
+    query += ' ORDER BY l.created_at DESC';
+    
+    const result = await db.query(query, params);
     res.json(result.rows);
   } catch (error) {
     console.error('Get leads error:', error);
@@ -46,7 +85,7 @@ export const getLeadById = async (req, res) => {
     console.log('User role:', req.user?.role);
     console.log('User ID:', req.user?.id);
     
-    const result = await db.query(`
+    let query = `
       SELECT l.*, 
              l.phone as phone_no,
              l.vehicle_number as vehicle_no,
@@ -64,7 +103,42 @@ export const getLeadById = async (req, res) => {
       LEFT JOIN branches br ON cu.branch_id = br.id
       LEFT JOIN loans ln ON l.id = ln.lead_id
       WHERE l.id = $1
-    `, [req.params.id]);
+    `;
+    
+    const params = [req.params.id];
+    
+    if (req.user.role === 'team_leader') {
+      // Team leaders can only access leads assigned to or created by their team members
+      query += ` AND (
+        l.assigned_to IN (SELECT id FROM users WHERE reporting_to = $2)
+        OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $2)
+      )`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'manager') {
+      // Managers can access leads from their team leaders and all their team members
+      query += ` AND (
+        l.assigned_to IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $2
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
+        ) OR l.created_by IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $2
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
+        )
+      )`;
+      params.push(req.user.id);
+    }
+    
+    const result = await db.query(query, params);
     
     console.log('Query result rows:', result.rows.length);
     
@@ -80,7 +154,7 @@ export const getLeadById = async (req, res) => {
     console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
-};
+}
 
 export const createLead = async (req, res) => {
   try {

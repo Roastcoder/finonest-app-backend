@@ -1,5 +1,6 @@
 import db from '../config/database.js';
 import { buildUpdateQuery } from '../utils/postgres.js';
+import { APPLICATION_STAGES } from './applicationStageController.js';
 
 export const getAllLoans = async (req, res) => {
   try {
@@ -7,7 +8,20 @@ export const getAllLoans = async (req, res) => {
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
              b.name as bank_name,
-             br.name as broker_name
+             br.name as broker_name,
+             l.application_stage,
+             l.app_score,
+             l.credit_score,
+             l.tags,
+             l.roi,
+             l.loan_account_number,
+             l.rc_type,
+             l.rc_collected_by,
+             l.rto_agent_name_rc,
+             l.rto_agent_mobile,
+             l.banker_name,
+             l.banker_mobile,
+             l.stage_changed_at
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
@@ -22,14 +36,9 @@ export const getAllLoans = async (req, res) => {
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
-      // Team leader apni aur apne team members ki loans dekhega
-      const teamResult = await db.query(
-        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
-        [req.user.id]
-      );
-      const teamIds = teamResult.rows.map(r => r.id);
-      conditions.push(`l.created_by = ANY($1)`);
-      values.push(teamIds);
+      // Team leader sirf apni loans dekhega
+      conditions.push('l.created_by = $1');
+      values.push(req.user.id);
     }
     // Admin/others ke liye koi filter nahi
     
@@ -58,7 +67,20 @@ export const getLoanById = async (req, res) => {
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
              b.name as bank_name,
-             br.name as broker_name
+             br.name as broker_name,
+             l.application_stage,
+             l.app_score,
+             l.credit_score,
+             l.tags,
+             l.roi,
+             l.loan_account_number,
+             l.rc_type,
+             l.rc_collected_by,
+             l.rto_agent_name_rc,
+             l.rto_agent_mobile,
+             l.banker_name,
+             l.banker_mobile,
+             l.stage_changed_at
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
@@ -73,13 +95,8 @@ export const getLoanById = async (req, res) => {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
-      const teamResult = await db.query(
-        'SELECT id FROM users WHERE reporting_to = $1 OR id = $1',
-        [req.user.id]
-      );
-      const teamIds = teamResult.rows.map(r => r.id);
-      query += ' AND l.created_by = ANY($2)';
-      values.push(teamIds);
+      query += ' AND l.created_by = $2';
+      values.push(req.user.id);
     }
     
     console.log('Executing query:', query);
@@ -175,6 +192,7 @@ export const createLoan = async (req, res) => {
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
       loan_amount: req.body.loan_amount || 0,
+      application_stage: APPLICATION_STAGES.SUBMITTED,
       ltv: req.body.ltv || null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,
       vehicle_number: req.body.vehicle_number || null,
@@ -227,6 +245,7 @@ export const createLoan = async (req, res) => {
       sourcing_person_name: req.body.sourcing_person_name || null,
       remark: req.body.remark || null,
       status: req.body.status || 'pending',
+      application_stage: req.body.application_stage || APPLICATION_STAGES.SUBMITTED,
       disbursement_date: req.body.disbursement_date || null,
       pdd: req.body.pdd || null,
       assigned_to: req.body.assigned_to || null,
@@ -371,6 +390,21 @@ export const updateLoan = async (req, res) => {
       sourcing_person_name: req.body.sourcing_person_name || null,
       remark: req.body.remark || null,
       status: req.body.status || req.body.fileStatus || null,
+      application_stage: req.body.application_stage || null,
+      app_score: req.body.app_score ? parseFloat(req.body.app_score) : null,
+      credit_score: req.body.credit_score ? parseInt(req.body.credit_score) : null,
+      tags: req.body.tags ? (Array.isArray(req.body.tags) ? req.body.tags : [req.body.tags]) : null,
+      rejection_remarks: req.body.rejection_remarks || null,
+      approval_remarks: req.body.approval_remarks || null,
+      roi: req.body.roi ? parseFloat(req.body.roi) : null,
+      loan_account_number: req.body.loan_account_number || null,
+      rc_type: req.body.rc_type || null,
+      rc_collected_by: req.body.rc_collected_by || null,
+      rto_agent_name_rc: req.body.rto_agent_name_rc || null,
+      rto_agent_mobile: req.body.rto_agent_mobile || null,
+      banker_name: req.body.banker_name || null,
+      banker_mobile: req.body.banker_mobile || null,
+      cancellation_remarks: req.body.cancellation_remarks || null,
       disbursement_date: req.body.disbursement_date || null,
       pdd: req.body.pdd || null,
       assigned_to: req.body.assigned_to || null
@@ -387,12 +421,30 @@ export const updateLoan = async (req, res) => {
       return res.status(400).json({ error: 'No valid fields to update' });
     }
     
+    // Get current loan data for stage history tracking
+    const currentLoanResult = await client.query(
+      'SELECT application_stage FROM loans WHERE id = $1',
+      [req.params.id]
+    );
+    
+    const currentStage = currentLoanResult.rows[0]?.application_stage;
+    const newStage = filteredData.application_stage;
+    
     const { query, values } = buildUpdateQuery('loans', filteredData, req.params.id);
     const result = await client.query(query, values);
     
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Loan not found' });
+    }
+
+    // Record stage history if application stage changed
+    if (newStage && currentStage && newStage !== currentStage) {
+      await client.query(
+        `INSERT INTO application_stage_history (loan_id, from_stage, to_stage, changed_by, remarks) 
+         VALUES ($1, $2, $3, $4, $5)`,
+        [req.params.id, currentStage, newStage, req.user.id, req.body.stage_remarks || 'Updated via loan edit']
+      );
     }
 
     await client.query('COMMIT');

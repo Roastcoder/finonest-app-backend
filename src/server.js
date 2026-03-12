@@ -26,6 +26,7 @@ import accountantRoutes from './routes/accountant.js';
 import integrationRoutes from './routes/integrations.js';
 import timelineRoutes from './routes/timeline.js';
 import fieldPermissionRoutes from './routes/fieldPermissions.js';
+import applicationStageRoutes from './routes/applicationStages.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 
@@ -67,6 +68,7 @@ app.use('/api/rc-verification', rcVerificationRoutes);
 app.use('/api/accountant', accountantRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/timeline', timelineRoutes);
+app.use('/api/application-stages', applicationStageRoutes);
 
 app.get('/', (req, res) => {
   res.json({

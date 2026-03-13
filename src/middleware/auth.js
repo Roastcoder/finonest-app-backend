@@ -2,8 +2,8 @@ import jwt from 'jsonwebtoken';
 
 export const roleHierarchy = {
   admin: 6,
-  ops_team: 5,
-  sales_manager: 4,
+  sales_manager: 5,
+  branch_manager: 4,
   dsa: 3,
   team_leader: 2,
   executive: 1

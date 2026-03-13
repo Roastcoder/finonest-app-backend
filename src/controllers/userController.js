@@ -5,18 +5,9 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 export const getHierarchyTree = async (req, res) => {
   try {
     const query = `
-      WITH RECURSIVE user_tree AS (
-        SELECT id, user_id, full_name, email, role, reporting_to, branch_id
-        FROM users
-        WHERE reporting_to IS NULL
-
-        UNION ALL
-
-        SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id
-        FROM users u
-        INNER JOIN user_tree t ON u.reporting_to = t.id
-      )
-      SELECT * FROM user_tree;
+      SELECT id, user_id, full_name, email, role, reporting_to, branch_id, dsa_id
+      FROM users
+      ORDER BY role DESC, full_name ASC
     `;
 
     const result = await db.query(query);
@@ -48,12 +39,12 @@ export const getAllUsers = async (req, res) => {
     }
     // Branch managers can see their team leaders and executives
     else if (req.user.role === 'branch_manager') {
-      query += ` WHERE u.reporting_to = $1 OR u.dsa_id = $1`;
+      query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     }
     // DSAs can see their team leaders and executives
     else if (req.user.role === 'dsa') {
-      query += ` WHERE u.reporting_to = $1 OR u.dsa_id = $1`;
+      query += ` WHERE u.dsa_id = $1`;
       params.push(req.user.id);
     }
     // Sales managers can see their branch managers and DSAs
@@ -74,12 +65,14 @@ export const getAllUsers = async (req, res) => {
 export const getUserById = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name,
-             m.full_name as manager_name
+             m.full_name as manager_name,
+             d.full_name as dsa_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
       LEFT JOIN users m ON u.reporting_to = m.id
+      LEFT JOIN users d ON u.dsa_id = d.id
       WHERE u.id = $1
     `, [req.params.id]);
     if (result.rows.length === 0) {
@@ -117,10 +110,20 @@ export const createUser = async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'Sales managers can only create branch managers and DSAs' });
       }
+      // Branch manager must have branch_id
+      if (role === 'branch_manager' && !branch_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'branch_id is required for branch managers' });
+      }
     } else if (req.user.role === 'branch_manager') {
       if (!['team_leader', 'executive'].includes(role)) {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'Branch managers can only create team leaders and executives' });
+      }
+      // Team leaders created by branch manager must have branch_id
+      if (role === 'team_leader' && !branch_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'branch_id is required for team leaders' });
       }
     } else if (req.user.role === 'dsa') {
       if (!['team_leader', 'executive'].includes(role)) {
@@ -226,7 +229,7 @@ export const deleteUser = async (req, res) => {
   try {
     // Check if user has any dependencies
     const dependencies = await db.query(
-      'SELECT COUNT(*) as count FROM users WHERE reporting_to = $1',
+      'SELECT COUNT(*) as count FROM users WHERE reporting_to = $1 OR dsa_id = $1',
       [req.params.id]
     );
     
@@ -251,10 +254,12 @@ export const searchUser = async (req, res) => {
   try {
     const { name } = req.query;
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to,
-             m.full_name as manager_name, m.role as manager_role
+      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.dsa_id,
+             m.full_name as manager_name, m.role as manager_role,
+             d.full_name as dsa_name
       FROM users u
       LEFT JOIN users m ON u.reporting_to = m.id
+      LEFT JOIN users d ON u.dsa_id = d.id
       WHERE u.full_name ILIKE $1
     `, [`%${name}%`]);
     res.json(result.rows);
@@ -266,7 +271,7 @@ export const searchUser = async (req, res) => {
 export const getTeamMembers = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -281,14 +286,30 @@ export const getTeamMembers = async (req, res) => {
 
 export const getManagerTeamHierarchy = async (req, res) => {
   try {
-    const teamLeaders = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
-             b.name as branch_name
-      FROM users u
-      LEFT JOIN branches b ON u.branch_id = b.id
-      WHERE u.reporting_to = $1 AND u.role = 'team_leader'
-      ORDER BY u.full_name ASC
-    `, [req.user.id]);
+    let teamLeaders;
+    
+    // Different queries based on role
+    if (req.user.role === 'branch_manager') {
+      teamLeaders = await db.query(`
+        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+               b.name as branch_name
+        FROM users u
+        LEFT JOIN branches b ON u.branch_id = b.id
+        WHERE u.reporting_to = $1 AND u.role = 'team_leader'
+        ORDER BY u.full_name ASC
+      `, [req.user.id]);
+    } else if (req.user.role === 'dsa') {
+      teamLeaders = await db.query(`
+        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+               b.name as branch_name
+        FROM users u
+        LEFT JOIN branches b ON u.branch_id = b.id
+        WHERE u.dsa_id = $1 AND u.role = 'team_leader'
+        ORDER BY u.full_name ASC
+      `, [req.user.id]);
+    } else {
+      return res.json([]);
+    }
 
     // If no team leaders, return empty array
     if (teamLeaders.rows.length === 0) {
@@ -298,7 +319,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
     const hierarchy = await Promise.all(
       teamLeaders.rows.map(async (leader) => {
         const teamMembers = await db.query(`
-          SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+          SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                  b.name as branch_name
           FROM users u
           LEFT JOIN branches b ON u.branch_id = b.id
@@ -318,4 +339,16 @@ export const getManagerTeamHierarchy = async (req, res) => {
     console.error('Get manager team hierarchy error:', error);
     res.status(500).json({ error: error.message });
   }
-}
+};
+
+export default {
+  getHierarchyTree,
+  getAllUsers,
+  getUserById,
+  createUser,
+  updateUser,
+  deleteUser,
+  searchUser,
+  getTeamMembers,
+  getManagerTeamHierarchy
+};

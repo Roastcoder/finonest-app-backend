@@ -29,13 +29,14 @@ export const getAllLeads = async (req, res) => {
     query += ` AND COALESCE(l.converted_to_loan, false) = false`;
     
     if (req.user.role === 'team_leader') {
-      // Team leaders see leads assigned to or created by their team members
+      // Team leaders see leads assigned to them, created by them, and leads from their team members
       query += `
-        AND (l.assigned_to IN (
-          SELECT id FROM users WHERE reporting_to = $1
-        ) OR l.created_by IN (
-          SELECT id FROM users WHERE reporting_to = $1
-        ))
+        AND (
+          l.assigned_to = $1
+          OR l.created_by = $1
+          OR l.assigned_to IN (SELECT id FROM users WHERE reporting_to = $1)
+          OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $1)
+        )
       `;
       params.push(req.user.id);
     } else if (req.user.role === 'manager') {
@@ -143,9 +144,11 @@ export const getLeadById = async (req, res) => {
     const params = [req.params.id];
     
     if (req.user.role === 'team_leader') {
-      // Team leaders can only access leads assigned to or created by their team members
+      // Team leaders can access leads assigned to them, created by them, and leads from their team members
       query += ` AND (
-        l.assigned_to IN (SELECT id FROM users WHERE reporting_to = $2)
+        l.assigned_to = $2
+        OR l.created_by = $2
+        OR l.assigned_to IN (SELECT id FROM users WHERE reporting_to = $2)
         OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $2)
       )`;
       params.push(req.user.id);

@@ -444,27 +444,91 @@ export const updateLoanStage = async (req, res) => {
     const loanId = req.params.id;
     const stageData = req.body;
     
-    // Get current stage history
-    const currentLoan = await db.query('SELECT stage_history FROM loans WHERE id = $1', [loanId]);
-    const currentHistory = currentLoan.rows[0]?.stage_history || [];
+    console.log('Updating loan stage:', { loanId, stageData });
     
-    // Add new stage to history
-    const updatedHistory = [...currentHistory, stageData];
-    
-    // Update the loan's current stage
-    await db.query(
-      'UPDATE loans SET application_stage = $1, stage_data = $2, stage_history = $3, updated_at = NOW() WHERE id = $4',
-      [stageData.stage, JSON.stringify(stageData), JSON.stringify(updatedHistory), loanId]
-    );
-    
-    // Handle auto-cancellation for APPROVED stage (30 days)
-    if (stageData.stage === 'APPROVED' && stageData.approvedData) {
-      console.log(`Scheduled auto-cancellation for loan ${loanId} after 30 days`);
+    // Validate required fields
+    if (!stageData.stage) {
+      return res.status(400).json({ error: 'Stage is required' });
     }
     
-    res.json({ message: 'Loan stage updated successfully' });
+    // Get current loan data
+    const currentLoan = await db.query(
+      'SELECT application_stage, stage_history, stage_data FROM loans WHERE id = $1', 
+      [loanId]
+    );
+    
+    if (currentLoan.rows.length === 0) {
+      return res.status(404).json({ error: 'Loan not found' });
+    }
+    
+    // Parse existing history (handle both string and object formats)
+    let currentHistory = [];
+    try {
+      const historyData = currentLoan.rows[0]?.stage_history;
+      if (historyData) {
+        currentHistory = typeof historyData === 'string' ? JSON.parse(historyData) : historyData;
+        if (!Array.isArray(currentHistory)) {
+          currentHistory = [];
+        }
+      }
+    } catch (parseError) {
+      console.log('Error parsing stage_history, starting with empty array:', parseError.message);
+      currentHistory = [];
+    }
+    
+    // Create new stage entry with timestamp
+    const newStageEntry = {
+      ...stageData,
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.user.id
+    };
+    
+    // Add new stage to history
+    const updatedHistory = [...currentHistory, newStageEntry];
+    
+    console.log('Updating with data:', {
+      stage: stageData.stage,
+      stageData: newStageEntry,
+      historyLength: updatedHistory.length
+    });
+    
+    // Update the loan's current stage - pass objects directly, not JSON strings
+    const updateResult = await db.query(
+      `UPDATE loans 
+       SET application_stage = $1, 
+           stage_data = $2, 
+           stage_history = $3, 
+           updated_at = NOW() 
+       WHERE id = $4 
+       RETURNING id, application_stage`,
+      [
+        stageData.stage, 
+        newStageEntry,  // Pass object directly for JSONB column
+        updatedHistory, // Pass array directly for JSONB column
+        loanId
+      ]
+    );
+    
+    if (updateResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Failed to update loan stage' });
+    }
+    
+    console.log('Loan stage updated successfully:', updateResult.rows[0]);
+    
+    res.json({ 
+      message: 'Loan stage updated successfully',
+      loan: updateResult.rows[0]
+    });
   } catch (error) {
     console.error('Update loan stage error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code
+    });
+    res.status(500).json({ 
+      error: error.message,
+      details: 'Failed to update loan application stage'
+    });
   }
 };

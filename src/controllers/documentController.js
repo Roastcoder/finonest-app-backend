@@ -120,7 +120,7 @@ export const uploadDocument = async (req, res) => {
     const documentData = {
       lead_id: parseInt(lead_id),
       document_type,
-      file_path: req.file.path,
+      file_path: path.relative(process.cwd(), req.file.path),
       file_name: req.file.originalname,
       file_size: req.file.size,
       uploaded_by: req.user.id,
@@ -211,12 +211,43 @@ export const downloadDocument = async (req, res) => {
     }
 
     const { file_path, file_name, document_type } = result.rows[0];
-    console.log('Document found:', { file_path, file_name, document_type });
+    console.log('Document found in DB:', { file_path, file_name, document_type });
     
-    if (!fs.existsSync(file_path)) {
-      console.log('File not found on filesystem:', file_path);
-      return res.status(404).json({ error: 'File not found on server' });
+    // Resolve path robustly
+    let resolvedPath = file_path;
+    
+    // If it's not absolute or exists as is, try it
+    if (!path.isAbsolute(resolvedPath)) {
+      resolvedPath = path.join(process.cwd(), resolvedPath);
     }
+    
+    // If the path doesn't exist, try resolving just the filename in the uploads/documents directory
+    // This handles cases where absolute paths from other environments (like Windows) were stored
+    if (!fs.existsSync(resolvedPath)) {
+      const fileNameInStorage = path.basename(file_path);
+      const alternativePath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
+      console.log('Original path not found, checking alternative:', alternativePath);
+      
+      if (fs.existsSync(alternativePath)) {
+        resolvedPath = alternativePath;
+      } else {
+        // Also check directly in 'uploads' in case they were uploaded there before our change
+        const altPath2 = path.join(process.cwd(), 'uploads', fileNameInStorage);
+        if (fs.existsSync(altPath2)) {
+          resolvedPath = altPath2;
+        }
+      }
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      console.log('File NOT found on filesystem anywhere:', resolvedPath);
+      return res.status(404).json({ 
+        error: 'File not found on server',
+        details: 'The document record exists but the physical file is missing.'
+      });
+    }
+
+    console.log('Serving file from:', resolvedPath);
 
     // Set appropriate content type
     const ext = path.extname(file_name).toLowerCase();
@@ -239,7 +270,7 @@ export const downloadDocument = async (req, res) => {
     res.setHeader('Content-Disposition', `inline; filename="${file_name}"`);
     
     // Stream the file
-    const fileStream = fs.createReadStream(file_path);
+    const fileStream = fs.createReadStream(resolvedPath);
     fileStream.pipe(res);
     
     fileStream.on('error', (error) => {

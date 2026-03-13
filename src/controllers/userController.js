@@ -258,6 +258,11 @@ export const getManagerTeamHierarchy = async (req, res) => {
       ORDER BY u.full_name ASC
     `, [req.user.id]);
 
+    // If no team leaders, return empty array
+    if (teamLeaders.rows.length === 0) {
+      return res.json([]);
+    }
+
     const hierarchy = await Promise.all(
       teamLeaders.rows.map(async (leader) => {
         const teamMembers = await db.query(`

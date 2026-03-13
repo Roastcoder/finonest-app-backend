@@ -44,6 +44,19 @@ export const getAllUsers = async (req, res) => {
       query += ' WHERE u.reporting_to = $1';
       params.push(req.user.id);
     }
+    // Managers can see their team leaders and all executives under those team leaders
+    else if (req.user.role === 'manager') {
+      query += ` WHERE u.id IN (
+        WITH RECURSIVE team_hierarchy AS (
+          SELECT id FROM users WHERE reporting_to = $1
+          UNION ALL
+          SELECT u.id FROM users u
+          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+        )
+        SELECT id FROM team_hierarchy
+      )`;
+      params.push(req.user.id);
+    }
 
     query += ' ORDER BY u.created_at DESC';
 
@@ -105,8 +118,7 @@ export const createUser = async (req, res) => {
     // Generate unique user ID
     const seqResult = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
-       FROM users 
-       FOR UPDATE`
+       FROM users`
     );
 
     const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
@@ -115,6 +127,7 @@ export const createUser = async (req, res) => {
 
     const userData = {
       user_id: userId,
+      name: full_name, // Add name field
       full_name,
       email,
       password: hashedPassword,

@@ -61,6 +61,18 @@ export const getAllLoans = async (req, res) => {
       // Team leader sirf apni loans dekhega
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
+      // Manager and DSA can see loans from their team hierarchy
+      conditions.push(`l.created_by IN (
+        WITH RECURSIVE team_hierarchy AS (
+          SELECT id FROM users WHERE reporting_to = $1
+          UNION ALL
+          SELECT u.id FROM users u
+          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+        )
+        SELECT id FROM team_hierarchy
+      )`);
+      values.push(req.user.id);
     }
     // Admin/others ke liye koi filter nahi
     
@@ -139,6 +151,17 @@ export const getLoanById = async (req, res) => {
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
       query += ' AND l.created_by = $2';
+      values.push(req.user.id);
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
+      query += ` AND l.created_by IN (
+        WITH RECURSIVE team_hierarchy AS (
+          SELECT id FROM users WHERE reporting_to = $2
+          UNION ALL
+          SELECT u.id FROM users u
+          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+        )
+        SELECT id FROM team_hierarchy
+      )`;
       values.push(req.user.id);
     }
     

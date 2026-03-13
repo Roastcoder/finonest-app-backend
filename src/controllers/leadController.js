@@ -39,8 +39,8 @@ export const getAllLeads = async (req, res) => {
         )
       `;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager') {
-      // Managers see leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
+      // Managers and DSAs see leads from their team leaders and all their team members
       query += `
         AND (l.assigned_to IN (
           WITH RECURSIVE team_hierarchy AS (
@@ -152,8 +152,8 @@ export const getLeadById = async (req, res) => {
         OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $2)
       )`;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager') {
-      // Managers can access leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
+      // Managers and DSAs can access leads from their team leaders and all their team members
       query += ` AND (
         l.assigned_to IN (
           WITH RECURSIVE team_hierarchy AS (

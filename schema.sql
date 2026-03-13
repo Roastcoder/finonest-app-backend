@@ -34,11 +34,13 @@ CREATE TABLE users (
   role VARCHAR(50) DEFAULT 'executive',
   reporting_to INT,
   branch_id INT,
+  dsa_id INT,
   joining_date DATE,
   status VARCHAR(20) DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (reporting_to) REFERENCES users(id) ON DELETE SET NULL
+  FOREIGN KEY (reporting_to) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (dsa_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Create banks table

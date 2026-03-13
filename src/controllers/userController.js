@@ -29,12 +29,14 @@ export const getHierarchyTree = async (req, res) => {
 export const getAllUsers = async (req, res) => {
   try {
     let query = `
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name,
-             m.full_name as manager_name
+             m.full_name as manager_name,
+             d.full_name as dsa_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
       LEFT JOIN users m ON u.reporting_to = m.id
+      LEFT JOIN users d ON u.dsa_id = d.id
     `;
 
     const params = [];
@@ -44,17 +46,19 @@ export const getAllUsers = async (req, res) => {
       query += ' WHERE u.reporting_to = $1';
       params.push(req.user.id);
     }
-    // Managers can see their team leaders and all executives under those team leaders
-    else if (req.user.role === 'manager') {
-      query += ` WHERE u.id IN (
-        WITH RECURSIVE team_hierarchy AS (
-          SELECT id FROM users WHERE reporting_to = $1
-          UNION ALL
-          SELECT u.id FROM users u
-          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
-        )
-        SELECT id FROM team_hierarchy
-      )`;
+    // Branch managers can see their team leaders and executives
+    else if (req.user.role === 'branch_manager') {
+      query += ` WHERE u.reporting_to = $1 OR u.dsa_id = $1`;
+      params.push(req.user.id);
+    }
+    // DSAs can see their team leaders and executives
+    else if (req.user.role === 'dsa') {
+      query += ` WHERE u.reporting_to = $1 OR u.dsa_id = $1`;
+      params.push(req.user.id);
+    }
+    // Sales managers can see their branch managers and DSAs
+    else if (req.user.role === 'sales_manager') {
+      query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     }
 
@@ -92,7 +96,7 @@ export const createUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { password, role, full_name, email, phone, branch_id, reporting_to } = req.body;
+    const { password, role, full_name, email, phone, branch_id, reporting_to, dsa_id } = req.body;
 
     // Validation
     if (!password || !role || !full_name || !email) {
@@ -101,9 +105,36 @@ export const createUser = async (req, res) => {
     }
 
     // Role-based permissions
-    if (req.user.role === 'manager' && !['team_leader', 'executive'].includes(role)) {
+    const validRoles = ['admin', 'sales_manager', 'branch_manager', 'dsa', 'team_leader', 'executive'];
+    if (!validRoles.includes(role)) {
       await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'Managers can only create team leaders and executives' });
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    // Permission checks based on user role
+    if (req.user.role === 'sales_manager') {
+      if (!['branch_manager', 'dsa'].includes(role)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Sales managers can only create branch managers and DSAs' });
+      }
+    } else if (req.user.role === 'branch_manager') {
+      if (!['team_leader', 'executive'].includes(role)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Branch managers can only create team leaders and executives' });
+      }
+    } else if (req.user.role === 'dsa') {
+      if (!['team_leader', 'executive'].includes(role)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'DSAs can only create team leaders and executives' });
+      }
+    } else if (req.user.role === 'team_leader') {
+      if (role !== 'executive') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Team leaders can only create executives' });
+      }
+    } else if (req.user.role !== 'admin') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Insufficient permissions' });
     }
 
     // Check if email already exists
@@ -127,7 +158,6 @@ export const createUser = async (req, res) => {
 
     const userData = {
       user_id: userId,
-      name: full_name, // Add name field
       full_name,
       email,
       password: hashedPassword,
@@ -135,6 +165,7 @@ export const createUser = async (req, res) => {
       role,
       branch_id: branch_id || null,
       reporting_to: reporting_to || null,
+      dsa_id: dsa_id || null,
       joining_date: new Date().toISOString().split('T')[0],
       status: 'active'
     };
@@ -165,7 +196,7 @@ export const createUser = async (req, res) => {
 
 export const updateUser = async (req, res) => {
   try {
-    const { password, role, branch_id, reporting_to, ...userData } = req.body;
+    const { password, role, branch_id, reporting_to, dsa_id, ...userData } = req.body;
     const updates = { ...userData };
 
     if (password) {
@@ -174,6 +205,7 @@ export const updateUser = async (req, res) => {
     if (role) updates.role = role;
     if (branch_id !== undefined) updates.branch_id = branch_id;
     if (reporting_to !== undefined) updates.reporting_to = reporting_to;
+    if (dsa_id !== undefined) updates.dsa_id = dsa_id;
 
     const { query, values } = buildUpdateQuery('users', updates, req.params.id);
     const result = await db.query(query, values);

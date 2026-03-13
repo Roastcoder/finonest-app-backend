@@ -7,7 +7,7 @@ export const getAllLoans = async (req, res) => {
     let query = `
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
-             b.name as bank_name,
+             COALESCE(b.name, l.financier_name) as bank_name,
              br.name as broker_name,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
              CASE 
@@ -109,7 +109,7 @@ export const getLoanById = async (req, res) => {
     let query = `
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
-             b.name as bank_name,
+             COALESCE(b.name, l.financier_name) as bank_name,
              br.name as broker_name,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
              CASE 

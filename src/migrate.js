@@ -95,6 +95,29 @@ const migrate = async () => {
     );
     `);
 
+    // Ensure all required columns exist in loans table
+    await client.query(`
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL;
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(255);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS mobile VARCHAR(20);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS co_applicant_name VARCHAR(255);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS guarantor_name VARCHAR(255);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_type VARCHAR(50);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_name VARCHAR(255);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS sourcing_person_name VARCHAR(255);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS vertical VARCHAR(100);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS scheme VARCHAR(100);
+      ALTER TABLE loans ADD COLUMN IF NOT EXISTS emi DECIMAL(15, 2);
+    `);
+
+    // Backfill case_type from leads for existing loans
+    await client.query(`
+      UPDATE loans l
+      SET case_type = le.case_type
+      FROM leads le
+      WHERE l.lead_id = le.id AND l.case_type IS NULL;
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS leads(
       id SERIAL PRIMARY KEY,

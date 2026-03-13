@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllLeads, getLeadById, createLead, updateLead, deleteLead, getCustomerProfile, upsertCustomerProfile, cloneLead, updateLeadStage, getLeadStatusHistory, getStatusStatistics, validateStatusTransition, runAutoCancellation } from '../controllers/leadController.js';
+import { getAllLeads, getLeadById, createLead, updateLead, deleteLead, getCustomerProfile, upsertCustomerProfile, cloneLead, updateLeadStage, getLeadStatusHistory, getStatusStatistics, validateStatusTransition } from '../controllers/leadController.js';
 import { authenticate } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 import statusValidation from '../middleware/statusValidation.js';
@@ -19,7 +19,7 @@ router.get('/:id/profile', getCustomerProfile);
 router.post('/:id/profile', auditLogger('customer_profiles', 'UPSERT_PROFILE'), upsertCustomerProfile);
 router.post('/:id/clone', auditLogger('leads', 'CLONE_LEAD'), cloneLead);
 router.put('/:id/stage', 
-  auditLogger('leads', 'UPDATE_STAGE'),
+  auditLogger('leads', 'CONVERT_TO_LOAN'),
   statusValidation.validateStatusTransition,
   statusValidation.validateStatusFields,
   statusValidation.checkStatusUpdatePermissions,
@@ -28,6 +28,5 @@ router.put('/:id/stage',
 );
 router.get('/:id/status-history', getLeadStatusHistory);
 router.post('/validate-transition', validateStatusTransition);
-router.post('/auto-cancel', runAutoCancellation);
 
 export default router;

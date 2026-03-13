@@ -417,6 +417,13 @@ const createLoanFromLead = async (client, leadId, stageData, userId) => {
     lead.assigned_to,
     userId
   ]);
+
+  // Mark lead as converted to loan
+  const updateResult = await client.query(
+    'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW() WHERE id = $1 RETURNING id, converted_to_loan',
+    [leadId]
+  );
+  console.log(`✅ Created loan ${loanNumber} from lead ${leadId}. Lead marked as converted_to_loan:`, updateResult.rows[0]?.converted_to_loan);
 };
 
 // Generate Loan Number

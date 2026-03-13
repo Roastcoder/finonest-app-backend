@@ -10,49 +10,38 @@ const notifyLeadCreated = async (leadId, assignedTo) => {
 
 export const getAllLeads = async (req, res) => {
   try {
-  let query = `
+    let query = `
       SELECT l.*, 
              l.phone as phone_no,
              l.vehicle_number as vehicle_no,
              l.city as district,
-             COALESCE(l.customer_id, CONCAT(
-               UPPER(SUBSTRING(COALESCE(u.full_name, 'US'), 1, 2)),
-               UPPER(SUBSTRING(COALESCE(l.customer_name, 'C'), 1, 1)),
-               LPAD((ROW_NUMBER() OVER (PARTITION BY l.created_by ORDER BY l.id))::TEXT, 3, '0')
-             )) as customer_id,
-             COALESCE(u.full_name, u.user_id) as assigned_to_name, 
-             COALESCE(creator.full_name, creator.user_id) as created_by_name,
-             b.name as financier_name,
-             COALESCE(l.our_branch, br.name, 'Head Office') as our_branch,
-             CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
              l.stage_data,
-             l.stage_history
+             l.stage_history,
+             COALESCE(l.converted_to_loan, false) as converted_to_loan
       FROM leads l
-      LEFT JOIN users u ON l.assigned_to = u.id
-      LEFT JOIN users creator ON l.created_by = creator.id
-      LEFT JOIN banks b ON l.financier_id = b.id
-      LEFT JOIN users cu ON l.created_by = cu.id
-      LEFT JOIN branches br ON cu.branch_id = br.id
-      LEFT JOIN loans ln ON l.id = ln.lead_id
+      WHERE 1=1
     `;
     
     const params = [];
     
+    // Hide all converted leads from lead list (shown only in loan applications list)
+    query += ` AND COALESCE(l.converted_to_loan, false) = false`;
+    
     if (req.user.role === 'team_leader') {
       // Team leaders see leads assigned to or created by their team members
       query += `
-        WHERE l.assigned_to IN (
+        AND (l.assigned_to IN (
           SELECT id FROM users WHERE reporting_to = $1
         ) OR l.created_by IN (
           SELECT id FROM users WHERE reporting_to = $1
-        )
+        ))
       `;
       params.push(req.user.id);
     } else if (req.user.role === 'manager') {
       // Managers see leads from their team leaders and all their team members
       query += `
-        WHERE l.assigned_to IN (
+        AND (l.assigned_to IN (
           WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $1
             UNION ALL
@@ -68,7 +57,7 @@ export const getAllLeads = async (req, res) => {
             INNER JOIN team_hierarchy t ON u.reporting_to = t.id
           )
           SELECT id FROM team_hierarchy
-        )
+        ))
       `;
       params.push(req.user.id);
     }
@@ -76,9 +65,48 @@ export const getAllLeads = async (req, res) => {
     query += ' ORDER BY l.created_at DESC';
     
     const result = await db.query(query, params);
-    res.json(result.rows);
+    
+    // Add additional data via separate queries to avoid JOIN issues
+    const enrichedRows = await Promise.all(result.rows.map(async (lead) => {
+      try {
+        // Get assigned user name
+        let assigned_to_name = null;
+        if (lead.assigned_to) {
+          const userResult = await db.query('SELECT COALESCE(full_name, user_id) as name FROM users WHERE id = $1', [lead.assigned_to]);
+          assigned_to_name = userResult.rows[0]?.name || null;
+        }
+        
+        // Get creator name
+        let created_by_name = null;
+        if (lead.created_by) {
+          const creatorResult = await db.query('SELECT COALESCE(full_name, user_id) as name FROM users WHERE id = $1', [lead.created_by]);
+          created_by_name = creatorResult.rows[0]?.name || null;
+        }
+        
+        // Get financier name
+        let financier_name = null;
+        if (lead.financier_id) {
+          const bankResult = await db.query('SELECT name FROM banks WHERE id = $1', [lead.financier_id]);
+          financier_name = bankResult.rows[0]?.name || null;
+        }
+        
+        return {
+          ...lead,
+          assigned_to_name,
+          created_by_name,
+          financier_name,
+          our_branch: lead.our_branch || 'Head Office'
+        };
+      } catch (err) {
+        console.error('Error enriching lead data:', err);
+        return lead;
+      }
+    }));
+    
+    res.json(enrichedRows);
   } catch (error) {
-    console.error('Get leads error:', error);
+    console.error('Get leads error:', error.message);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message });
   }
 };
@@ -207,6 +235,19 @@ export const createLead = async (req, res) => {
       sourcing_person_name: userName,
       stage: 'lead',
       status: 'new',
+      application_stage: 'SUBMITTED', // Auto-generated default status
+      stage_data: {
+        stage: 'SUBMITTED',
+        submittedAt: new Date().toISOString(),
+        submittedBy: req.user.id
+      },
+      stage_history: [{
+        stage: 'SUBMITTED',
+        submittedAt: new Date().toISOString(),
+        submittedBy: req.user.id,
+        action: 'Lead created'
+      }],
+      converted_to_loan: false,
       source: req.body.source,
       notes: req.body.notes,
       follow_up_date: req.body.follow_up_date
@@ -454,18 +495,5 @@ export const validateStatusTransition = async (req, res) => {
       valid: false, 
       error: error.message 
     });
-  }
-};
-
-export const runAutoCancellation = async (req, res) => {
-  try {
-    const results = await leadStatusLogic.autoCancelExpiredApprovals();
-    res.json({
-      message: 'Auto-cancellation process completed',
-      results
-    });
-  } catch (error) {
-    console.error('Auto-cancellation error:', error);
-    res.status(500).json({ error: error.message });
   }
 };

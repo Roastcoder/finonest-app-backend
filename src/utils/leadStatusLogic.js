@@ -80,7 +80,7 @@ export const validateRequiredFields = (status, data) => {
   return true;
 };
 
-// Update Lead Status
+// Update Lead Status - Only for converting to loan
 export const updateLeadStatus = async (leadId, newStatus, statusData, userId) => {
   const client = await db.connect();
   
@@ -98,75 +98,62 @@ export const updateLeadStatus = async (leadId, newStatus, statusData, userId) =>
     }
     
     const currentStatus = leadResult.rows[0].application_stage || LEAD_STATUSES.SUBMITTED;
-    const currentHistory = leadResult.rows[0].stage_history || [];
     
-    // Validate transition
-    validateStatusTransition(currentStatus, newStatus);
+    // Only allow SUBMITTED -> DISBURSED transition (convert to loan)
+    if (currentStatus !== LEAD_STATUSES.SUBMITTED || newStatus !== LEAD_STATUSES.DISBURSED) {
+      throw new Error('Only conversion from SUBMITTED to DISBURSED (loan) is allowed');
+    }
     
-    // Validate required fields
+    // Validate required fields for loan conversion
     validateRequiredFields(newStatus, statusData);
     
-    // Prepare stage data
+    const currentHistory = leadResult.rows[0].stage_history || [];
+    
+    // Prepare stage data for loan conversion
     const stageData = {
       stage: newStatus,
       updatedAt: new Date().toISOString(),
       updatedBy: userId,
-      ...statusData
-    };
-    
-    // Add auto-generated fields based on status
-    if (newStatus === LEAD_STATUSES.APPROVED) {
-      stageData.approvedData = {
-        ...statusData,
-        approvedDate: new Date().toISOString()
-      };
-    } else if (newStatus === LEAD_STATUSES.DISBURSED) {
-      stageData.disbursedData = {
+      disbursedData: {
         ...statusData,
         disbursedDate: new Date().toISOString()
-      };
-    } else if (newStatus === LEAD_STATUSES.CANCELLED) {
-      stageData.cancelledData = {
-        ...statusData,
-        cancelledDate: new Date().toISOString()
-      };
-    } else if (newStatus === LEAD_STATUSES.REJECTED) {
-      stageData.rejectedData = {
-        ...statusData,
-        rejectedDate: new Date().toISOString()
-      };
-    }
+      }
+    };
     
     // Update stage history
     const updatedHistory = [...currentHistory, stageData];
     
-    // Update lead
+    // Update lead status to DISBURSED
     await client.query(
       'UPDATE leads SET application_stage = $1, stage_data = $2, stage_history = $3, updated_at = NOW() WHERE id = $4',
-      [newStatus, JSON.stringify(stageData), JSON.stringify(updatedHistory), leadId]
+      [newStatus, stageData, updatedHistory, leadId]
     );
     
-    // Create audit log
-    await client.query(
-      'INSERT INTO audit_logs (user_id, action, table_name, record_id, before_value, after_value) VALUES ($1, $2, $3, $4, $5, $6)',
-      [
-        userId,
-        'UPDATE_LEAD_STATUS',
-        'leads',
-        leadId,
-        JSON.stringify({ status: currentStatus }),
-        JSON.stringify({ status: newStatus, data: stageData })
-      ]
-    );
+    // Create audit log (optional - table may not exist)
+    try {
+      await client.query(
+        'INSERT INTO audit_logs (user_id, action, table_name, record_id, before_value, after_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          userId,
+          'CONVERT_LEAD_TO_LOAN',
+          'leads',
+          leadId,
+          JSON.stringify({ status: currentStatus }),
+          JSON.stringify({ status: newStatus, data: stageData })
+        ]
+      );
+    } catch (auditError) {
+      console.log(`Audit log: Lead ${leadId} converted from ${currentStatus} to ${newStatus}`);
+    }
     
-    // Handle special status logic
-    await handleStatusSpecialLogic(client, leadId, newStatus, stageData, userId);
+    // Convert to loan and mark as converted
+    await createLoanFromLead(client, leadId, stageData, userId);
     
     await client.query('COMMIT');
     
     return {
       success: true,
-      message: `Lead status updated to ${newStatus}`,
+      message: 'Lead successfully converted to loan',
       data: stageData
     };
     
@@ -176,34 +163,6 @@ export const updateLeadStatus = async (leadId, newStatus, statusData, userId) =>
   } finally {
     client.release();
   }
-};
-
-// Handle Special Status Logic
-const handleStatusSpecialLogic = async (client, leadId, status, stageData, userId) => {
-  switch (status) {
-    case LEAD_STATUSES.APPROVED:
-      // Schedule auto-cancellation after 30 days
-      await scheduleAutoCancellation(client, leadId, stageData.approvedData.approvedDate);
-      break;
-      
-    case LEAD_STATUSES.DISBURSED:
-      // Create loan record
-      await createLoanFromLead(client, leadId, stageData, userId);
-      break;
-      
-    case LEAD_STATUSES.REJECTED:
-    case LEAD_STATUSES.CANCELLED:
-      // Cancel any scheduled auto-cancellation
-      await cancelScheduledActions(client, leadId);
-      break;
-  }
-};
-
-// Schedule Auto-Cancellation
-const scheduleAutoCancellation = async (client, leadId, approvedDate) => {
-  // This would typically integrate with a job scheduler
-  // For now, we'll just log it
-  console.log(`Scheduled auto-cancellation for lead ${leadId} after 30 days from ${approvedDate}`);
 };
 
 // Create Loan from Lead
@@ -244,6 +203,14 @@ const createLoanFromLead = async (client, leadId, stageData, userId) => {
     lead.assigned_to,
     userId
   ]);
+  
+  // Mark lead as converted and update status to DISBURSED
+  const updateResult = await client.query(
+    'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW(), application_stage = $1 WHERE id = $2 RETURNING id, converted_to_loan',
+    ['DISBURSED', leadId]
+  );
+  
+  console.log(`Created loan ${loanNumber} from lead ${leadId}. Lead status: DISBURSED, converted_to_loan:`, updateResult.rows[0]);
 };
 
 // Generate Loan Number
@@ -251,11 +218,6 @@ const generateLoanNumber = async (client) => {
   const result = await client.query('SELECT COUNT(*) as count FROM loans');
   const count = parseInt(result.rows[0].count) + 1;
   return `LN${new Date().getFullYear()}${count.toString().padStart(6, '0')}`;
-};
-
-// Cancel Scheduled Actions
-const cancelScheduledActions = async (client, leadId) => {
-  console.log(`Cancelled scheduled actions for lead ${leadId}`);
 };
 
 // Get Lead Status History
@@ -272,46 +234,7 @@ export const getLeadStatusHistory = async (leadId) => {
   return result.rows[0].stage_history || [];
 };
 
-// Check Auto-Cancellation Eligibility
-export const checkAutoCancellationEligibility = async () => {
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  const result = await db.query(`
-    SELECT id, stage_data 
-    FROM leads 
-    WHERE application_stage = $1 
-    AND (stage_data->>'approvedData'->>'approvedDate')::timestamp < $2
-  `, [LEAD_STATUSES.APPROVED, thirtyDaysAgo.toISOString()]);
-  
-  return result.rows;
-};
-
-// Auto-Cancel Expired Approvals
-export const autoCancelExpiredApprovals = async () => {
-  const eligibleLeads = await checkAutoCancellationEligibility();
-  const results = [];
-  
-  for (const lead of eligibleLeads) {
-    try {
-      const result = await updateLeadStatus(
-        lead.id,
-        LEAD_STATUSES.CANCELLED,
-        {
-          remarks: 'Auto-cancelled: Not disbursed within 30 days of approval'
-        },
-        'SYSTEM'
-      );
-      results.push({ leadId: lead.id, success: true, result });
-    } catch (error) {
-      results.push({ leadId: lead.id, success: false, error: error.message });
-    }
-  }
-  
-  return results;
-};
-
-// Get Status Statistics
+// Get Status Statistics - simplified for SUBMITTED and DISBURSED only
 export const getStatusStatistics = async (filters = {}) => {
   let query = `
     SELECT 
@@ -358,6 +281,5 @@ export default {
   validateRequiredFields,
   updateLeadStatus,
   getLeadStatusHistory,
-  autoCancelExpiredApprovals,
   getStatusStatistics
 };

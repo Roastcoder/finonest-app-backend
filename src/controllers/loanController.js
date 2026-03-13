@@ -176,7 +176,11 @@ export const createLoan = async (req, res) => {
   try {
     await client.query('BEGIN');
     
-    console.log('Creating loan with data:', req.body);
+    console.log('=== LOAN CREATION REQUEST ===');
+    console.log('Request body lead_id:', req.body.lead_id);
+    console.log('Request body customer_id:', req.body.customer_id);
+    console.log('User:', req.user.id);
+    console.log('============================');
     
     // Get user details
     const userResult = await client.query(
@@ -214,6 +218,7 @@ export const createLoan = async (req, res) => {
     
     // Create comprehensive loan data object with all frontend fields
     const loanData = {
+      lead_id: req.body.lead_id || null,
       loan_number: loanId,
       customer_id: req.body.customer_id || null,
       applicant_name: req.body.applicant_name || null,
@@ -318,6 +323,22 @@ export const createLoan = async (req, res) => {
       values
     );
     
+    // If loan was created from a lead, mark the lead as converted
+    if (filteredData.lead_id) {
+      console.log(`Marking lead ${filteredData.lead_id} as converted...`);
+      const updateResult = await client.query(
+        'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW() WHERE id = $1 RETURNING id, customer_name, converted_to_loan',
+        [filteredData.lead_id]
+      );
+      if (updateResult.rows.length > 0) {
+        console.log(`✅ Lead ${filteredData.lead_id} (${updateResult.rows[0].customer_name}) marked as converted:`, updateResult.rows[0].converted_to_loan);
+      } else {
+        console.log(`⚠️ Lead ${filteredData.lead_id} not found in database`);
+      }
+    } else {
+      console.log('No lead_id provided - this is a direct loan creation');
+    }
+    
     await client.query('COMMIT');
     res.status(201).json({ 
       message: 'Loan created successfully', 
@@ -395,48 +416,32 @@ export const getLoanApplicationStageHistory = async (req, res) => {
   }
 };
 
-// Get Available Stage Transitions for Loan
-export const getLoanAvailableTransitions = async (req, res) => {
+export const updateLoanStage = async (req, res) => {
   try {
     const loanId = req.params.id;
+    const stageData = req.body;
     
-    // Team leaders cannot update loan applications, so no transitions available
-    if (req.user.role === 'team_leader') {
-      return res.json({
-        currentStage: null,
-        currentStageLabel: null,
-        availableTransitions: [],
-        transitionDetails: [],
-        message: 'Team leaders cannot update loan application status. Contact your manager for updates.'
-      });
-    }
+    // Get current stage history
+    const currentLoan = await db.query('SELECT stage_history FROM loans WHERE id = $1', [loanId]);
+    const currentHistory = currentLoan.rows[0]?.stage_history || [];
     
-    // Get current stage
-    const result = await db.query(
-      'SELECT application_stage FROM loans WHERE id = $1',
-      [loanId]
+    // Add new stage to history
+    const updatedHistory = [...currentHistory, stageData];
+    
+    // Update the loan's current stage
+    await db.query(
+      'UPDATE loans SET application_stage = $1, stage_data = $2, stage_history = $3, updated_at = NOW() WHERE id = $4',
+      [stageData.stage, JSON.stringify(stageData), JSON.stringify(updatedHistory), loanId]
     );
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Loan not found' });
+    // Handle auto-cancellation for APPROVED stage (30 days)
+    if (stageData.stage === 'APPROVED' && stageData.approvedData) {
+      console.log(`Scheduled auto-cancellation for loan ${loanId} after 30 days`);
     }
     
-    const currentStage = result.rows[0].application_stage || applicationStageLogic.APPLICATION_STAGES.SUBMITTED;
-    const availableTransitions = applicationStageLogic.STAGE_TRANSITIONS[currentStage] || [];
-    
-    res.json({
-      currentStage,
-      currentStageLabel: applicationStageLogic.STAGE_LABELS[currentStage],
-      availableTransitions,
-      transitionDetails: availableTransitions.map(stage => ({
-        stage,
-        label: applicationStageLogic.STAGE_LABELS[stage],
-        color: applicationStageLogic.STAGE_COLORS[stage],
-        requiredFields: applicationStageLogic.STAGE_REQUIRED_FIELDS[stage] || []
-      }))
-    });
+    res.json({ message: 'Loan stage updated successfully' });
   } catch (error) {
-    console.error('Get loan available transitions error:', error);
+    console.error('Update loan stage error:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -224,7 +224,8 @@ export const downloadDocument = async (req, res) => {
     // If the path doesn't exist, try resolving just the filename in the uploads/documents directory
     // This handles cases where absolute paths from other environments (like Windows) were stored
     if (!fs.existsSync(resolvedPath)) {
-      const fileNameInStorage = path.basename(file_path);
+      // Robustly get filename regardless of source path separator (/ or \)
+      const fileNameInStorage = file_path.split(/[\\/]/).pop();
       const alternativePath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
       console.log('Original path not found, checking alternative:', alternativePath);
       

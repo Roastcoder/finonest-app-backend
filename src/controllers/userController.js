@@ -284,6 +284,33 @@ export const getTeamMembers = async (req, res) => {
   }
 };
 
+export const getUsersByRole = async (req, res) => {
+  try {
+    const { roles } = req.query;
+    
+    if (!roles) {
+      return res.status(400).json({ error: 'roles query parameter is required' });
+    }
+    
+    const roleArray = roles.split(',').map(r => r.trim());
+    const placeholders = roleArray.map((_, i) => `$${i + 1}`).join(',');
+    
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      WHERE u.role IN (${placeholders}) AND u.status = 'active'
+      ORDER BY u.role DESC, u.full_name ASC
+    `, roleArray);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get users by role error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getManagerTeamHierarchy = async (req, res) => {
   try {
     let teamLeaders;
@@ -350,5 +377,6 @@ export default {
   deleteUser,
   searchUser,
   getTeamMembers,
-  getManagerTeamHierarchy
+  getManagerTeamHierarchy,
+  getUsersByRole
 };

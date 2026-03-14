@@ -224,7 +224,8 @@ export const downloadDocument = async (req, res) => {
     // If the path doesn't exist, try resolving just the filename in the uploads/documents directory
     // This handles cases where absolute paths from other environments (like Windows) were stored
     if (!fs.existsSync(resolvedPath)) {
-      const fileNameInStorage = path.basename(file_path);
+      // Robustly get filename regardless of source path separator (/ or \)
+      const fileNameInStorage = file_path.split(/[\\/]/).pop();
       const alternativePath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
       console.log('Original path not found, checking alternative:', alternativePath);
       
@@ -288,6 +289,9 @@ export const downloadDocument = async (req, res) => {
 
 export const getDocumentsByLead = async (req, res) => {
   try {
+    const leadId = req.params.leadId;
+    console.log(`Fetching documents for lead ID: ${leadId}`);
+    
     const result = await db.query(`
       SELECT d.*, 
              COALESCE(u.full_name, u.user_id) as uploaded_by_name
@@ -295,7 +299,12 @@ export const getDocumentsByLead = async (req, res) => {
       LEFT JOIN users u ON d.uploaded_by = u.id
       WHERE d.lead_id = $1
       ORDER BY d.document_type, d.created_at DESC
-    `, [req.params.leadId]);
+    `, [leadId]);
+    
+    console.log(`Found ${result.rows.length} documents for lead ${leadId}`);
+    result.rows.forEach(doc => {
+      console.log(`  - Document: ${doc.document_type} (ID: ${doc.id}, File: ${doc.file_name})`);
+    });
     
     res.json(result.rows);
   } catch (error) {

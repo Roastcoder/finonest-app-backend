@@ -7,6 +7,7 @@ export const getAllLoans = async (req, res) => {
     let query = `
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
+             COALESCE(creator.full_name, creator.user_id) as created_by_name,
              COALESCE(b.name, l.financier_name) as bank_name,
              br.name as broker_name,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
@@ -46,6 +47,7 @@ export const getAllLoans = async (req, res) => {
              l.stage_history
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN users creator ON l.created_by = creator.id
       LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
       LEFT JOIN brokers br ON COALESCE(l.assigned_broker_id, l.broker_id) = br.id
     `;
@@ -61,16 +63,21 @@ export const getAllLoans = async (req, res) => {
       // Team leader sirf apni loans dekhega
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
-      // Manager and DSA can see loans from their team hierarchy
-      conditions.push(`l.created_by IN (
-        WITH RECURSIVE team_hierarchy AS (
-          SELECT id FROM users WHERE reporting_to = $1
-          UNION ALL
-          SELECT u.id FROM users u
-          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Manager, DSA, and Branch Manager can see:
+      // 1. Loans created by their team
+      // 2. Loans assigned to them
+      conditions.push(`(
+        l.created_by IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $1
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
         )
-        SELECT id FROM team_hierarchy
+        OR l.assigned_to = $1
       )`);
       values.push(req.user.id);
     }
@@ -109,6 +116,7 @@ export const getLoanById = async (req, res) => {
     let query = `
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
+             COALESCE(creator.full_name, creator.user_id) as created_by_name,
              COALESCE(b.name, l.financier_name) as bank_name,
              br.name as broker_name,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
@@ -138,6 +146,7 @@ export const getLoanById = async (req, res) => {
              l.stage_history
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
+      LEFT JOIN users creator ON l.created_by = creator.id
       LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
       LEFT JOIN brokers br ON COALESCE(l.assigned_broker_id, l.broker_id) = br.id
       WHERE l.id = $1
@@ -152,15 +161,21 @@ export const getLoanById = async (req, res) => {
     } else if (req.user.role === 'team_leader') {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
-      query += ` AND l.created_by IN (
-        WITH RECURSIVE team_hierarchy AS (
-          SELECT id FROM users WHERE reporting_to = $2
-          UNION ALL
-          SELECT u.id FROM users u
-          INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Manager, DSA, and Branch Manager can see:
+      // 1. Loans created by their team
+      // 2. Loans assigned to them
+      query += ` AND (
+        l.created_by IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $2
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
         )
-        SELECT id FROM team_hierarchy
+        OR l.assigned_to = $2
       )`;
       values.push(req.user.id);
     }
@@ -254,6 +269,8 @@ export const createLoan = async (req, res) => {
       guarantor_name: req.body.guarantor_name || null,
       guarantor_mobile: req.body.guarantor_mobile || null,
       current_address: req.body.current_address || null,
+      current_landmark: req.body.current_landmark || req.body.landmark || null,
+      landmark: req.body.current_landmark || req.body.landmark || null,
       current_village: req.body.current_village || null,
       current_tehsil: req.body.current_tehsil || null,
       current_district: req.body.current_district || null,
@@ -275,6 +292,7 @@ export const createLoan = async (req, res) => {
       ltv: req.body.ltv || null,
       loan_type_vehicle: req.body.loan_type_vehicle || null,
       vehicle_number: req.body.vehicle_number || null,
+      case_type: req.body.case_type || null,
       engine_number: req.body.engine_number || null,
       chassis_number: req.body.chassis_number || null,
       owner_name: req.body.owner_name || null,

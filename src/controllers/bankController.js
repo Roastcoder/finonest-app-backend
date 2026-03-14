@@ -1,4 +1,36 @@
 import db from '../config/database.js';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+// Configure multer for logo uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = 'uploads/bank-logos';
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'bank-logo-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image/')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files are allowed'), false);
+  }
+};
+
+export const upload = multer({ 
+  storage, 
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
 
 export const getAllBanks = async (req, res) => {
   try {
@@ -24,20 +56,19 @@ export const getBankById = async (req, res) => {
 export const createBank = async (req, res) => {
   try {
     const { 
-      name, geo_limit, sales_manager_name, sales_manager_mobile,
-      area_sales_manager_name, area_sales_manager_mobile, product, logo_url,
-      location, interest_rate, is_active
+      name, location, geo_limit, sales_manager_name, sales_manager_mobile,
+      area_sales_manager_name, area_sales_manager_mobile, product
     } = req.body;
+    
+    const logo_url = req.file ? `/uploads/bank-logos/${req.file.filename}` : null;
     
     const result = await db.query(
       `INSERT INTO banks (
         name, location, geo_limit, sales_manager_name, sales_manager_mobile,
-        area_sales_manager_name, area_sales_manager_mobile, product, logo_url,
-        interest_rate, is_active
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        area_sales_manager_name, area_sales_manager_mobile, product, logo_url, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active') RETURNING id`,
       [name, location, geo_limit, sales_manager_name, sales_manager_mobile,
-       area_sales_manager_name, area_sales_manager_mobile, product, logo_url,
-       interest_rate, is_active]
+       area_sales_manager_name, area_sales_manager_mobile, product, logo_url]
     );
     res.status(201).json({ message: 'Bank created successfully', bankId: result.rows[0].id });
   } catch (error) {
@@ -47,7 +78,10 @@ export const createBank = async (req, res) => {
 
 export const updateBank = async (req, res) => {
   try {
-    const { name, code, contact_person, contact_email, contact_phone, status, location, geo_limit, sales_manager_name, sales_manager_mobile, area_sales_manager_name, area_sales_manager_mobile, product, logo_url, interest_rate, is_active } = req.body;
+    const { 
+      name, location, geo_limit, sales_manager_name, sales_manager_mobile,
+      area_sales_manager_name, area_sales_manager_mobile, product, status
+    } = req.body;
     const updates = [];
     const values = [];
     let paramCount = 1;
@@ -56,21 +90,37 @@ export const updateBank = async (req, res) => {
       updates.push(`name = $${paramCount++}`);
       values.push(name);
     }
-    if (code !== undefined) {
-      updates.push(`code = $${paramCount++}`);
-      values.push(code);
+    if (location !== undefined) {
+      updates.push(`location = $${paramCount++}`);
+      values.push(location);
     }
-    if (contact_person !== undefined) {
-      updates.push(`contact_person = $${paramCount++}`);
-      values.push(contact_person);
+    if (geo_limit !== undefined) {
+      updates.push(`geo_limit = $${paramCount++}`);
+      values.push(geo_limit);
     }
-    if (contact_email !== undefined) {
-      updates.push(`contact_email = $${paramCount++}`);
-      values.push(contact_email);
+    if (sales_manager_name !== undefined) {
+      updates.push(`sales_manager_name = $${paramCount++}`);
+      values.push(sales_manager_name);
     }
-    if (contact_phone !== undefined) {
-      updates.push(`contact_phone = $${paramCount++}`);
-      values.push(contact_phone);
+    if (sales_manager_mobile !== undefined) {
+      updates.push(`sales_manager_mobile = $${paramCount++}`);
+      values.push(sales_manager_mobile);
+    }
+    if (area_sales_manager_name !== undefined) {
+      updates.push(`area_sales_manager_name = $${paramCount++}`);
+      values.push(area_sales_manager_name);
+    }
+    if (area_sales_manager_mobile !== undefined) {
+      updates.push(`area_sales_manager_mobile = $${paramCount++}`);
+      values.push(area_sales_manager_mobile);
+    }
+    if (product !== undefined) {
+      updates.push(`product = $${paramCount++}`);
+      values.push(product);
+    }
+    if (req.file) {
+      updates.push(`logo_url = $${paramCount++}`);
+      values.push(`/uploads/bank-logos/${req.file.filename}`);
     }
     if (status !== undefined) {
       updates.push(`status = $${paramCount++}`);

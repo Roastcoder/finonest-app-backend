@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoanStage } from '../controllers/loanController.js';
+import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoan, updateLoanStage } from '../controllers/loanController.js';
 import { authenticate } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 
@@ -10,6 +10,7 @@ router.use(authenticate);
 router.get('/', getAllLoans);
 router.get('/:id', getLoanById);
 router.post('/', auditLogger('loans', 'CREATE_LOAN'), createLoan);
+router.put('/:id', auditLogger('loans', 'UPDATE_LOAN'), updateLoan);
 router.delete('/:id', auditLogger('loans', 'DELETE_LOAN'), deleteLoan);
 router.put('/:id/stage', auditLogger('loans', 'UPDATE_STAGE'), updateLoanStage);
 

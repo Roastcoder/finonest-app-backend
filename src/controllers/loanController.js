@@ -332,6 +332,11 @@ export const createLoan = async (req, res) => {
       net_disbursement_amount: req.body.net_disbursement_amount || null,
       payment_received_date: req.body.payment_received_date || null,
       rc_owner_name: req.body.rc_owner_name || null,
+      existing_loan_status: req.body.existing_loan_status || null,
+      existing_loan_amount: req.body.existing_loan_amount ? Number(req.body.existing_loan_amount) : null,
+      existing_tenure: req.body.existing_tenure ? Number(req.body.existing_tenure) : null,
+      existing_emi: req.body.existing_emi ? Number(req.body.existing_emi) : null,
+      no_of_emi_paid: req.body.no_of_emi_paid ? Number(req.body.no_of_emi_paid) : null,
       bouncing_3_months: req.body.bouncing_last_3m != null ? Number(req.body.bouncing_last_3m) : (req.body.bouncing_3_months != null ? Number(req.body.bouncing_3_months) : null),
       bouncing_6_months: req.body.bouncing_last_6m != null ? Number(req.body.bouncing_last_6m) : (req.body.bouncing_6_months != null ? Number(req.body.bouncing_6_months) : null),
       rto_agent_name: req.body.rto_agent_name || null,
@@ -413,6 +418,116 @@ export const deleteLoan = async (req, res) => {
     res.json({ message: 'Loan deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+export const updateLoan = async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const loanId = req.params.id;
+    
+    // Get existing columns from loans table
+    const columnsResult = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'loans'
+    `);
+    const existingColumns = columnsResult.rows.map(r => r.column_name);
+    
+    // Build update data with all possible fields
+    const updateData = {
+      existing_loan_status: req.body.existing_loan_status !== undefined ? req.body.existing_loan_status : undefined,
+      existing_loan_amount: req.body.existing_loan_amount !== undefined ? Number(req.body.existing_loan_amount) : undefined,
+      existing_tenure: req.body.existing_tenure !== undefined ? Number(req.body.existing_tenure) : undefined,
+      existing_emi: req.body.existing_emi !== undefined ? Number(req.body.existing_emi) : undefined,
+      no_of_emi_paid: req.body.no_of_emi_paid !== undefined ? Number(req.body.no_of_emi_paid) : undefined,
+      bouncing_3_months: req.body.bouncing_3_months !== undefined ? Number(req.body.bouncing_3_months) : undefined,
+      bouncing_6_months: req.body.bouncing_6_months !== undefined ? Number(req.body.bouncing_6_months) : undefined,
+      applicant_name: req.body.applicant_name,
+      mobile: req.body.mobile,
+      email: req.body.email,
+      co_applicant_name: req.body.co_applicant_name,
+      co_applicant_mobile: req.body.co_applicant_mobile,
+      guarantor_name: req.body.guarantor_name,
+      guarantor_mobile: req.body.guarantor_mobile,
+      current_address: req.body.current_address,
+      current_landmark: req.body.current_landmark,
+      current_district: req.body.current_district,
+      current_state: req.body.current_state,
+      current_pincode: req.body.current_pincode,
+      vehicle_number: req.body.vehicle_number,
+      maker_name: req.body.maker_name,
+      model_variant_name: req.body.model_variant_name,
+      engine_number: req.body.engine_number,
+      chassis_number: req.body.chassis_number,
+      owner_name: req.body.owner_name,
+      fuel_type: req.body.fuel_type,
+      manufacturing_date: req.body.manufacturing_date,
+      ownership_type: req.body.ownership_type,
+      financer: req.body.financer,
+      finance_status: req.body.finance_status,
+      insurance_company: req.body.insurance_company,
+      insurance_valid_upto: req.body.insurance_valid_upto,
+      pucc_valid_upto: req.body.pucc_valid_upto,
+      case_type: req.body.case_type,
+      emi_amount: req.body.emi_amount,
+      tenure: req.body.tenure,
+      total_interest: req.body.total_interest,
+      loan_amount: req.body.loan_amount,
+      selected_financier: req.body.selected_financier,
+      financier_location: req.body.financier_location,
+      financier_name: req.body.financier_name,
+      insurance_company_name: req.body.insurance_company_name,
+      premium_amount: req.body.premium_amount,
+      total_deduction: req.body.total_deduction,
+      net_disbursement_amount: req.body.net_disbursement_amount,
+      payment_received_date: req.body.payment_received_date,
+      rc_owner_name: req.body.rc_owner_name,
+      rto_agent_name: req.body.rto_agent_name,
+      agent_mobile_no: req.body.agent_mobile_no,
+      login_date: req.body.login_date,
+      approval_date: req.body.approval_date,
+      assigned_to: req.body.assigned_to
+    };
+    
+    // Filter: remove undefined AND columns that don't exist in table
+    const filteredData = Object.fromEntries(
+      Object.entries(updateData)
+        .filter(([key, value]) => value !== undefined && existingColumns.includes(key))
+    );
+    
+    if (Object.keys(filteredData).length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+    
+    // Build SET clause
+    const setClause = Object.keys(filteredData)
+      .map((key, i) => `${key} = $${i + 1}`)
+      .join(', ');
+    
+    const values = [...Object.values(filteredData), loanId];
+    
+    const result = await client.query(
+      `UPDATE loans SET ${setClause}, updated_at = NOW() WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Loan not found' });
+    }
+    
+    await client.query('COMMIT');
+    res.json({ message: 'Loan updated successfully', loan: result.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Update loan error:', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

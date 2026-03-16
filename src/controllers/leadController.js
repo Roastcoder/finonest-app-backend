@@ -197,29 +197,33 @@ export const getLeadById = async (req, res) => {
 }
 
 export const createLead = async (req, res) => {
+  const client = await db.connect();
   try {
-    // Generate customer_id: User initials (2) + Customer initials (1) + Sequential number (3)
-    // Example: JAR001 (John Admin, Rahul, lead #1)
-    
-    // Get user's name initials (first 2 letters of first name)
-    const userResult = await db.query('SELECT COALESCE(full_name, user_id, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
+    await client.query('BEGIN');
+
+    const userResult = await client.query('SELECT COALESCE(full_name, user_id, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
     const userName = userResult.rows[0]?.user_name || 'User';
     const userInitials = userName.substring(0, 2).toUpperCase();
-    
-    // Get customer name initial (first letter of first name)
-    const customerName = req.body.customer_name || 'Customer';
-    const customerInitial = customerName.charAt(0).toUpperCase();
-    
-    // Get next sequential number for this user
-    const countResult = await db.query(
-      'SELECT COUNT(*) as count FROM leads WHERE created_by = $1',
+    const customerInitial = (req.body.customer_name || 'C').charAt(0).toUpperCase();
+
+    // Use MAX of existing sequence to avoid duplicates from deleted records
+    const seqResult = await client.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(customer_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+       FROM leads WHERE created_by = $1 AND customer_id ~ '^[A-Z]{2}[A-Z]\\d+$'`,
       [req.user.id]
     );
-    const leadNumber = (parseInt(countResult.rows[0].count) + 1).toString().padStart(3, '0');
-    
-    // Format: XXYZZZ (2 user initials + 1 customer initial + 3 digit number) = 6 characters
-    const customerId = `${userInitials}${customerInitial}${leadNumber}`;
+    let seq = seqResult.rows[0]?.next_seq || 1;
 
+    // Keep incrementing until we find a unique customer_id
+    let customerId;
+    let attempts = 0;
+    while (attempts < 10) {
+      customerId = `${userInitials}${customerInitial}${String(seq).padStart(3, '0')}`;
+      const exists = await client.query('SELECT 1 FROM leads WHERE customer_id = $1', [customerId]);
+      if (exists.rows.length === 0) break;
+      seq++;
+      attempts++;
+    }
     const leadData = {
       customer_id: customerId,
       customer_name: req.body.customer_name,
@@ -241,7 +245,7 @@ export const createLead = async (req, res) => {
       sourcing_person_name: userName,
       stage: 'lead',
       status: 'new',
-      application_stage: 'SUBMITTED', // Auto-generated default status
+      application_stage: 'SUBMITTED',
       stage_data: {
         stage: 'SUBMITTED',
         submittedAt: new Date().toISOString(),
@@ -259,18 +263,17 @@ export const createLead = async (req, res) => {
       follow_up_date: req.body.follow_up_date
     };
 
-    // Filter out null/undefined values
     const filteredData = Object.fromEntries(
       Object.entries(leadData).filter(([_, value]) => value !== null && value !== undefined && value !== '')
     );
 
     const { keys, values, params } = toPostgresParams(filteredData);
-    const result = await db.query(
+    const result = await client.query(
       `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id, customer_id`,
       values
     );
 
-    await db.query(
+    await client.query(
       `INSERT INTO lead_stage_history (lead_id, to_stage, changed_by) VALUES ($1, $2, $3)`,
       [result.rows[0].id, 'lead', req.user.id]
     );
@@ -279,14 +282,18 @@ export const createLead = async (req, res) => {
       await notifyLeadCreated(result.rows[0].id, filteredData.assigned_to);
     }
 
+    await client.query('COMMIT');
     res.status(201).json({ 
       message: 'Lead created successfully', 
       leadId: result.rows[0].id,
       customerId: result.rows[0].customer_id
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Lead creation error:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

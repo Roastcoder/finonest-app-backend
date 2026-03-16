@@ -4,13 +4,33 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getHierarchyTree = async (req, res) => {
   try {
-    const query = `
-      SELECT id, user_id, full_name, email, role, reporting_to, branch_id, dsa_id
-      FROM users
-      ORDER BY role DESC, full_name ASC
+    let query = `
+      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id, u.dsa_id,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
     `;
+    const params = [];
 
-    const result = await db.query(query);
+    if (req.user.role === 'manager') {
+      query += ` WHERE u.role IN ('dsa', 'branch_manager', 'team_leader', 'executive')`;
+    } else if (req.user.role === 'sales_manager') {
+      query += ` WHERE u.reporting_to = $1 OR u.role IN ('branch_manager', 'dsa', 'team_leader', 'executive')`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'branch_manager') {
+      query += ` WHERE u.reporting_to = $1 OR u.role = 'executive'`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'dsa') {
+      query += ` WHERE u.dsa_id = $1`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
+      query += ` WHERE u.reporting_to = $1`;
+      params.push(req.user.id);
+    }
+    // admin sees all — no filter
+
+    query += ' ORDER BY role DESC, full_name ASC';
+    const result = await db.query(query, params);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -51,6 +71,10 @@ export const getAllUsers = async (req, res) => {
     else if (req.user.role === 'sales_manager') {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
+    }
+    // Manager sees dsa, branch_manager, team_leader, executive
+    else if (req.user.role === 'manager') {
+      query += ` WHERE u.role IN ('dsa', 'branch_manager', 'team_leader', 'executive')`;
     }
 
     query += ' ORDER BY u.created_at DESC';

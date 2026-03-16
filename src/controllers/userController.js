@@ -12,10 +12,8 @@ export const getHierarchyTree = async (req, res) => {
     `;
     const params = [];
 
-    if (req.user.role === 'manager') {
-      query += ` WHERE u.role IN ('dsa', 'branch_manager', 'team_leader', 'executive')`;
-    } else if (req.user.role === 'sales_manager') {
-      query += ` WHERE u.reporting_to = $1 OR u.role IN ('branch_manager', 'dsa', 'team_leader', 'executive')`;
+    if (req.user.role === 'sales_manager') {
+      query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     } else if (req.user.role === 'branch_manager') {
       query += ` WHERE u.reporting_to = $1 OR u.role = 'executive'`;
@@ -31,7 +29,8 @@ export const getHierarchyTree = async (req, res) => {
 
     query += ' ORDER BY role DESC, full_name ASC';
     const result = await db.query(query, params);
-    res.json(result.rows);
+    const rows = result.rows.map(u => ({ ...u, role: u.role === 'manager' ? 'sales_manager' : u.role }));
+    res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -72,10 +71,7 @@ export const getAllUsers = async (req, res) => {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     }
-    // Manager sees dsa, branch_manager, team_leader, executive
-    else if (req.user.role === 'manager') {
-      query += ` WHERE u.role IN ('dsa', 'branch_manager', 'team_leader', 'executive')`;
-    }
+
 
     query += ' ORDER BY u.created_at DESC';
 

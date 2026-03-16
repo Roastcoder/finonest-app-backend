@@ -355,7 +355,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
-        WHERE u.dsa_id = $1 AND u.role = 'team_leader'
+        WHERE (u.dsa_id = $1 OR u.reporting_to = $1) AND u.role = 'team_leader'
         ORDER BY u.full_name ASC
       `, [req.user.id]);
     } else {

@@ -64,13 +64,11 @@ export const getAllLoans = async (req, res) => {
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
     } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
-      // Manager, DSA, and Branch Manager can see:
-      // 1. Loans created by their team
-      // 2. Loans assigned to them
+      // Manager, DSA, and Branch Manager can see loans created by their team
       conditions.push(`(
         l.created_by IN (
           WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
+            SELECT id FROM users WHERE reporting_to = $1 OR dsa_id = $1
             UNION ALL
             SELECT u.id FROM users u
             INNER JOIN team_hierarchy t ON u.reporting_to = t.id
@@ -78,6 +76,7 @@ export const getAllLoans = async (req, res) => {
           SELECT id FROM team_hierarchy
         )
         OR l.assigned_to = $1
+        OR l.created_by = $1
       )`);
       values.push(req.user.id);
     }
@@ -162,13 +161,10 @@ export const getLoanById = async (req, res) => {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
     } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
-      // Manager, DSA, and Branch Manager can see:
-      // 1. Loans created by their team
-      // 2. Loans assigned to them
       query += ` AND (
         l.created_by IN (
           WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $2
+            SELECT id FROM users WHERE reporting_to = $2 OR dsa_id = $2
             UNION ALL
             SELECT u.id FROM users u
             INNER JOIN team_hierarchy t ON u.reporting_to = t.id
@@ -176,6 +172,7 @@ export const getLoanById = async (req, res) => {
           SELECT id FROM team_hierarchy
         )
         OR l.assigned_to = $2
+        OR l.created_by = $2
       )`;
       values.push(req.user.id);
     }
@@ -335,6 +332,8 @@ export const createLoan = async (req, res) => {
       net_disbursement_amount: req.body.net_disbursement_amount || null,
       payment_received_date: req.body.payment_received_date || null,
       rc_owner_name: req.body.rc_owner_name || null,
+      bouncing_3_months: req.body.bouncing_last_3m != null ? Number(req.body.bouncing_last_3m) : (req.body.bouncing_3_months != null ? Number(req.body.bouncing_3_months) : null),
+      bouncing_6_months: req.body.bouncing_last_6m != null ? Number(req.body.bouncing_last_6m) : (req.body.bouncing_6_months != null ? Number(req.body.bouncing_6_months) : null),
       rto_agent_name: req.body.rto_agent_name || null,
       agent_mobile_no: req.body.agent_mobile_no || null,
       login_date: req.body.login_date || null,

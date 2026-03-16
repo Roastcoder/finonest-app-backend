@@ -63,7 +63,7 @@ export const getAllLoans = async (req, res) => {
       // Team leader sirf apni loans dekhega
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
       // Manager, DSA, and Branch Manager can see loans created by their team
       conditions.push(`(
         l.created_by IN (
@@ -160,7 +160,7 @@ export const getLoanById = async (req, res) => {
     } else if (req.user.role === 'team_leader') {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
       query += ` AND (
         l.created_by IN (
           WITH RECURSIVE team_hierarchy AS (

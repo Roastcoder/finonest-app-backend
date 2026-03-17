@@ -336,7 +336,34 @@ export const getManagerTeamHierarchy = async (req, res) => {
     let teamLeaders;
     
     // Different queries based on role
-    if (req.user.role === 'branch_manager') {
+    if (req.user.role === 'sales_manager') {
+      // sales_manager sees all branch_managers and DSAs reporting to them, with their team leaders
+      const directReports = await db.query(`
+        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+               b.name as branch_name
+        FROM users u
+        LEFT JOIN branches b ON u.branch_id = b.id
+        WHERE u.reporting_to = $1
+        ORDER BY u.full_name ASC
+      `, [req.user.id]);
+
+      if (directReports.rows.length === 0) return res.json([]);
+
+      const hierarchy = await Promise.all(
+        directReports.rows.map(async (report: any) => {
+          const teamMembers = await db.query(`
+            SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+                   b.name as branch_name
+            FROM users u
+            LEFT JOIN branches b ON u.branch_id = b.id
+            WHERE u.reporting_to = $1
+            ORDER BY u.full_name ASC
+          `, [report.id]);
+          return { ...report, team_members: teamMembers.rows };
+        })
+      );
+      return res.json(hierarchy);
+    } else if (req.user.role === 'branch_manager') {
       teamLeaders = await db.query(`
         SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                b.name as branch_name

@@ -680,8 +680,8 @@ export const updateLoanStage = async (req, res) => {
       extraCols.push('roi', 'tenure', 'approval_remarks');
       extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAmount ? `Approved amount: ${stageData.loanAmount}` : null);
     } else if (stageData.stage === 'DISBURSED') {
-      extraCols.push('roi', 'tenure', 'loan_account_number', 'rc_type', 'rc_collected_by', 'disbursement_date');
-      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, new Date().toISOString());
+      extraCols.push('roi', 'tenure', 'loan_account_number', 'rc_type', 'rc_collected_by', 'disbursement_date', 'rto_agent_name_rc', 'rto_agent_mobile', 'banker_name', 'banker_mobile');
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, new Date().toISOString(), stageData.agentName || null, stageData.agentMobile || null, stageData.bankerName || null, stageData.bankerMobile || null);
     } else if (stageData.stage === 'REJECTED') {
       extraCols.push('rejection_remarks');
       extraVals.push(stageData.remarks || null);
@@ -703,6 +703,7 @@ export const updateLoanStage = async (req, res) => {
            stage_data = $2, 
            stage_history = $3
            ${extraSet},
+           stage_changed_at = NOW(),
            updated_at = NOW() 
        WHERE id = ${idParam}
        RETURNING id, application_stage`,

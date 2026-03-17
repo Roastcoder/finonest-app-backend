@@ -390,7 +390,7 @@ export const createLoan = async (req, res) => {
     if (filteredData.lead_id) {
       console.log(`Marking lead ${filteredData.lead_id} as converted...`);
       const updateResult = await client.query(
-        'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW() WHERE id = $1 RETURNING id, customer_name, converted_to_loan',
+        'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW(), application_stage = \'DISBURSED\' WHERE id = $1 RETURNING id, customer_name, converted_to_loan',
         [filteredData.lead_id]
       );
       if (updateResult.rows.length > 0) {
@@ -507,7 +507,31 @@ export const updateLoan = async (req, res) => {
       agent_mobile_no: req.body.agent_mobile_no,
       login_date: req.body.login_date,
       approval_date: req.body.approval_date,
-      assigned_to: req.body.assigned_to
+      assigned_to: req.body.assigned_to,
+      // Income fields
+      income_source: req.body.income_source,
+      monthly_income: req.body.monthly_income !== undefined ? (Number(req.body.monthly_income) || null) : undefined,
+      company_name: req.body.company_name,
+      designation: req.body.designation,
+      work_experience: req.body.work_experience,
+      current_job_years: req.body.current_job_years,
+      total_work_exp: req.body.total_work_exp,
+      net_monthly_salary: req.body.net_monthly_salary !== undefined ? (Number(req.body.net_monthly_salary) || null) : undefined,
+      salary_credit_mode: req.body.salary_credit_mode,
+      salary_slip_available: req.body.salary_slip_available,
+      profile: req.body.profile,
+      itr_available: req.body.itr_available,
+      annual_income_itr: req.body.annual_income_itr !== undefined ? (Number(req.body.annual_income_itr) || null) : undefined,
+      business_name: req.body.business_name,
+      business_type: req.body.business_type,
+      business_vintage: req.body.business_vintage,
+      professional_subtype: req.body.professional_subtype,
+      practice_experience: req.body.practice_experience,
+      freelancer_subtype: req.body.freelancer_subtype,
+      other_income_type: req.body.other_income_type,
+      our_branch: req.body.our_branch,
+      sourcing_person_name: req.body.sourcing_person_name,
+      remark: req.body.remark,
     };
     
     // Filter: remove undefined AND columns that don't exist in table

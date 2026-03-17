@@ -26,10 +26,15 @@ export const getAllLeads = async (req, res) => {
     
     const params = [];
     
-    // Hide all converted leads from lead list (shown only in loan applications list)
-    query += ` AND COALESCE(l.converted_to_loan, false) = false`;
+    // Hide converted leads for non-admin roles
+    if (req.user.role !== 'admin') {
+      query += ` AND COALESCE(l.converted_to_loan, false) = false`;
+    }
     
-    if (req.user.role === 'team_leader') {
+    if (req.user.role === 'executive') {
+      query += ` AND (l.assigned_to = $1 OR l.created_by = $1)`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
       // Team leaders see leads assigned to them, created by them, and leads from their team members
       query += `
         AND (

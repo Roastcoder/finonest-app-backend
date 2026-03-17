@@ -198,7 +198,13 @@ export const deleteDocument = async (req, res) => {
 
 export const downloadDocument = async (req, res) => {
   try {
-    console.log('Download request for document ID:', req.params.id);
+    // Support token via query param for iframe preview
+    if (!req.user && req.query.token) {
+      try {
+        const jwt = await import('jsonwebtoken');
+        req.user = jwt.default.verify(req.query.token, process.env.JWT_SECRET || 'your-secret-key');
+      } catch { return res.status(401).json({ error: 'Invalid token' }); }
+    }
     
     const result = await db.query(
       'SELECT file_path, file_name, document_type FROM documents WHERE id = $1',

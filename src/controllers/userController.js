@@ -350,7 +350,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
       if (directReports.rows.length === 0) return res.json([]);
 
       const hierarchy = await Promise.all(
-        directReports.rows.map(async (report: any) => {
+        directReports.rows.map(async (report) => {
           const teamMembers = await db.query(`
             SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                    b.name as branch_name

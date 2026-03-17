@@ -9,7 +9,7 @@ router.use(authenticate);
 
 router.get('/hierarchy', authorize('admin', 'manager', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getHierarchyTree);
 router.get('/by-role', authorize('admin', 'manager'), getUsersByRole);
-router.get('/my-team/hierarchy', authorize('manager', 'branch_manager', 'dsa'), getManagerTeamHierarchy);
+router.get('/my-team/hierarchy', authorize('manager', 'sales_manager', 'branch_manager', 'dsa'), getManagerTeamHierarchy);
 router.get('/', authorize('admin', 'manager', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getAllUsers);
 router.get('/search', authorize('admin', 'manager', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), searchUser);
 router.get('/team/:leaderId', authorize('admin', 'manager', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getTeamMembers);

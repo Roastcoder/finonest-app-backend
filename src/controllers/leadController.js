@@ -45,7 +45,6 @@ export const getAllLeads = async (req, res) => {
       query += ` AND (l.assigned_to = $1 OR l.created_by = $1)`;
       params.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
-      // Team leaders see leads assigned to them, created by them, and leads from their team members
       query += `
         AND (
           l.assigned_to = $1
@@ -55,26 +54,31 @@ export const getAllLeads = async (req, res) => {
         )
       `;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa') {
-      // Managers and DSAs see leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Managers/Branch Managers see only their own leads + leads from their entire team hierarchy
       query += `
-        AND (l.assigned_to IN (
-          WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
-            UNION ALL
-            SELECT u.id FROM users u
-            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+        AND (
+          l.assigned_to = $1
+          OR l.created_by = $1
+          OR l.assigned_to IN (
+            WITH RECURSIVE team_hierarchy AS (
+              SELECT id FROM users WHERE reporting_to = $1
+              UNION ALL
+              SELECT u.id FROM users u
+              INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+            )
+            SELECT id FROM team_hierarchy
           )
-          SELECT id FROM team_hierarchy
-        ) OR l.created_by IN (
-          WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
-            UNION ALL
-            SELECT u.id FROM users u
-            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          OR l.created_by IN (
+            WITH RECURSIVE team_hierarchy AS (
+              SELECT id FROM users WHERE reporting_to = $1
+              UNION ALL
+              SELECT u.id FROM users u
+              INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+            )
+            SELECT id FROM team_hierarchy
           )
-          SELECT id FROM team_hierarchy
-        ))
+        )
       `;
       params.push(req.user.id);
     }
@@ -169,10 +173,11 @@ export const getLeadById = async (req, res) => {
         OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $2)
       )`;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa') {
-      // Managers and DSAs can access leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
       query += ` AND (
-        l.assigned_to IN (
+        l.assigned_to = $2
+        OR l.created_by = $2
+        OR l.assigned_to IN (
           WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $2
             UNION ALL

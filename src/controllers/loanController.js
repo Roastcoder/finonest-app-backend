@@ -510,7 +510,7 @@ export const updateLoan = async (req, res) => {
       assigned_to: req.body.assigned_to,
       // Income fields
       income_source: req.body.income_source,
-      monthly_income: req.body.monthly_income !== undefined ? (Number(req.body.monthly_income) || null) : undefined,
+      monthly_income: req.body.monthly_income !== undefined ? (req.body.monthly_income ? Number(req.body.monthly_income) : null) : undefined,
       company_name: req.body.company_name,
       designation: req.body.designation,
       work_experience: req.body.work_experience,
@@ -666,21 +666,47 @@ export const updateLoanStage = async (req, res) => {
       historyLength: updatedHistory.length
     });
     
-    // Update the loan's current stage - pass objects directly, not JSON strings
+    // Build extra column updates for stage-specific fields
+    const extraCols = [];
+    const extraVals = [];
+
+    if (stageData.stage === 'LOGIN') {
+      extraCols.push('app_score', 'credit_score');
+      extraVals.push(stageData.appScore || null, stageData.creditScore || null);
+    } else if (stageData.stage === 'IN_PROCESS') {
+      extraCols.push('tags');
+      extraVals.push(stageData.tags || []);
+    } else if (stageData.stage === 'APPROVED') {
+      extraCols.push('roi', 'tenure', 'approval_remarks');
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAmount ? `Approved amount: ${stageData.loanAmount}` : null);
+    } else if (stageData.stage === 'DISBURSED') {
+      extraCols.push('roi', 'tenure', 'loan_account_number', 'rc_type', 'rc_collected_by', 'disbursement_date');
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, new Date().toISOString());
+    } else if (stageData.stage === 'REJECTED') {
+      extraCols.push('rejection_remarks');
+      extraVals.push(stageData.remarks || null);
+    } else if (stageData.stage === 'CANCELLED') {
+      extraCols.push('cancellation_remarks');
+      extraVals.push(stageData.remarks || null);
+    }
+
+    // Base params: $1=stage, $2=stage_data, $3=stage_history, then extra cols, last=loanId
+    const baseVals = [stageData.stage, newStageEntry, updatedHistory, ...extraVals, loanId];
+    const extraSetClauses = extraCols.map((col, i) => `${col} = $${i + 4}`).join(', ');
+    const idParam = `$${baseVals.length}`;
+    const extraSet = extraSetClauses ? `, ${extraSetClauses}` : '';
+
+    // Update the loan's current stage
     const updateResult = await db.query(
       `UPDATE loans 
        SET application_stage = $1, 
            stage_data = $2, 
-           stage_history = $3, 
+           stage_history = $3
+           ${extraSet},
            updated_at = NOW() 
-       WHERE id = $4 
+       WHERE id = ${idParam}
        RETURNING id, application_stage`,
-      [
-        stageData.stage, 
-        newStageEntry,  // Pass object directly for JSONB column
-        updatedHistory, // Pass array directly for JSONB column
-        loanId
-      ]
+      baseVals
     );
     
     if (updateResult.rows.length === 0) {

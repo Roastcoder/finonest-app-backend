@@ -1,94 +1,158 @@
 import axios from 'axios';
 
-class WhatsAppAPI {
+class BotBizWhatsAppAPI {
   constructor() {
-    this.baseURL = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
-    this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    this.baseURL = 'https://dash.botbiz.io/api/v1';
+    this.apiToken = process.env.BOTBIZ_API_TOKEN;
+    this.phoneNumberId = process.env.BOTBIZ_PHONE_NUMBER_ID;
   }
 
-  async sendTextMessage(to, message) {
+  async sendTextMessage(phoneNumber, message) {
     try {
       const response = await axios.post(
-        `${this.baseURL}/${this.phoneNumberId}/messages`,
+        `${this.baseURL}/whatsapp/send`,
         {
-          messaging_product: 'whatsapp',
-          to: to,
-          type: 'text',
-          text: { body: message }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Content-Type': 'application/json'
-          }
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          message: message,
+          phone_number: phoneNumber
         }
       );
       return response.data;
     } catch (error) {
-      console.error('WhatsApp send error:', error.response?.data || error.message);
+      console.error('BotBiz WhatsApp send error:', error.response?.data || error.message);
       throw error;
     }
   }
 
-  async sendTemplateMessage(to, templateName, parameters = []) {
+  async sendTemplateMessage(phoneNumber, templateName, parameters = []) {
     try {
+      // BotBiz uses a different endpoint for template messages
+      // This would need to be configured based on your specific templates
       const response = await axios.post(
-        `${this.baseURL}/${this.phoneNumberId}/messages`,
+        `${this.baseURL}/whatsapp/send/template`,
         {
-          messaging_product: 'whatsapp',
-          to: to,
-          type: 'template',
-          template: {
-            name: templateName,
-            language: { code: 'en' },
-            components: parameters.length > 0 ? [{
-              type: 'body',
-              parameters: parameters.map(param => ({ type: 'text', text: param }))
-            }] : []
-          }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Content-Type': 'application/json'
-          }
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          template_name: templateName,
+          phone_number: phoneNumber,
+          parameters: parameters
         }
       );
       return response.data;
     } catch (error) {
-      console.error('WhatsApp template error:', error.response?.data || error.message);
+      console.error('BotBiz WhatsApp template error:', error.response?.data || error.message);
       throw error;
     }
   }
 
-  async sendDocumentMessage(to, documentUrl, filename, caption = '') {
+  async sendDocumentMessage(phoneNumber, documentUrl, filename, caption = '') {
     try {
+      // BotBiz document sending - may need adjustment based on their actual API
       const response = await axios.post(
-        `${this.baseURL}/${this.phoneNumberId}/messages`,
+        `${this.baseURL}/whatsapp/send/document`,
         {
-          messaging_product: 'whatsapp',
-          to: to,
-          type: 'document',
-          document: {
-            link: documentUrl,
-            filename: filename,
-            caption: caption
-          }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Content-Type': 'application/json'
-          }
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          phone_number: phoneNumber,
+          document_url: documentUrl,
+          filename: filename,
+          caption: caption
         }
       );
       return response.data;
     } catch (error) {
-      console.error('WhatsApp document error:', error.response?.data || error.message);
+      console.error('BotBiz WhatsApp document error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getConversation(phoneNumber, limit = 10, offset = 0) {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/whatsapp/get/conversation`,
+        {
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          phone_number: phoneNumber,
+          limit: limit,
+          offset: offset
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('BotBiz get conversation error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getMessageStatus(waMessageId, whatsappBotId) {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/whatsapp/get/message-status`,
+        {
+          apiToken: this.apiToken,
+          wa_message_id: waMessageId,
+          whatsapp_bot_id: whatsappBotId
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('BotBiz message status error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getTemplateList() {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/whatsapp/template/list`,
+        {
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('BotBiz template list error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async getSubscriber(phoneNumber) {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/whatsapp/subscriber/get`,
+        {
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          phone_number: phoneNumber
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('BotBiz get subscriber error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  async triggerBotFlow(phoneNumber, botFlowUniqueId) {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/whatsapp/trigger-bot`,
+        {
+          apiToken: this.apiToken,
+          phone_number_id: this.phoneNumberId,
+          bot_flow_unique_id: botFlowUniqueId,
+          phone_number: phoneNumber
+        }
+      );
+      return response.data;
+    } catch (error) {
+      console.error('BotBiz trigger bot error:', error.response?.data || error.message);
       throw error;
     }
   }
 }
 
-export default new WhatsAppAPI();
+export default new BotBizWhatsAppAPI();

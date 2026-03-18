@@ -1,4 +1,4 @@
-import WhatsAppAPI from '../integrations/whatsappApi.js';
+import BotBizWhatsAppAPI from '../integrations/whatsappApi.js';
 import db from '../config/database.js';
 
 class WhatsAppNotificationService {
@@ -38,26 +38,7 @@ Status: Under Review
 
 We'll keep you updated on the progress. Thank you for choosing Finonest!`;
 
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
-    } catch (error) {
-      console.error('WhatsApp loan confirmation error:', error);
-    }
-  }
-
-  // Send document request
-  async sendDocumentRequest(leadId, documentType) {
-    try {
-      const customerPhone = await this.getCustomerWhatsAppNumber(leadId);
-      if (!customerPhone) return;
-
-      const message = `📄 Document Required
-      
-Application ID: ${leadId}
-Required Document: ${documentType}
-
-Please upload the required document through our portal or contact your relationship manager.`;
-
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
+      await BotBizWhatsAppAPI.sendTextMessage(customerPhone, message);
     } catch (error) {
       console.error('WhatsApp document request error:', error);
     }
@@ -76,27 +57,7 @@ Approved Amount: ₹${amount.toLocaleString()}
 
 Our team will contact you shortly for the next steps.`;
 
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
-    } catch (error) {
-      console.error('WhatsApp approval error:', error);
-    }
-  }
-
-  // Send loan disbursement notification
-  async sendDisbursementNotification(leadId, amount, accountNumber) {
-    try {
-      const customerPhone = await this.getCustomerWhatsAppNumber(leadId);
-      if (!customerPhone) return;
-
-      const message = `💰 Loan Disbursed Successfully!
-      
-Application ID: ${leadId}
-Amount: ₹${amount.toLocaleString()}
-Account: ***${accountNumber.slice(-4)}
-
-The amount has been credited to your account. Thank you for choosing Finonest!`;
-
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
+      await BotBizWhatsAppAPI.sendTextMessage(customerPhone, message);
     } catch (error) {
       console.error('WhatsApp disbursement error:', error);
     }
@@ -116,27 +77,7 @@ Reason: ${reason}
 
 You can reapply after addressing the mentioned concerns. Contact us for assistance.`;
 
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
-    } catch (error) {
-      console.error('WhatsApp rejection error:', error);
-    }
-  }
-
-  // Send staff notification for new lead
-  async sendStaffNewLeadNotification(userId, leadId, customerName) {
-    try {
-      const staffPhone = await this.getUserWhatsAppNumber(userId);
-      if (!staffPhone) return;
-
-      const message = `🔔 New Lead Assigned
-      
-Lead ID: ${leadId}
-Customer: ${customerName}
-Status: New
-
-Please review and take necessary action.`;
-
-      await WhatsAppAPI.sendTextMessage(staffPhone, message);
+      await BotBizWhatsAppAPI.sendTextMessage(customerPhone, message);
     } catch (error) {
       console.error('WhatsApp staff notification error:', error);
     }
@@ -156,26 +97,7 @@ Due Date: ${dueDate}
 
 Please make the payment to avoid late charges.`;
 
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
-    } catch (error) {
-      console.error('WhatsApp payment reminder error:', error);
-    }
-  }
-
-  // Send stage change notification
-  async sendStageChangeNotification(leadId, newStage) {
-    try {
-      const customerPhone = await this.getCustomerWhatsAppNumber(leadId);
-      if (!customerPhone) return;
-
-      const message = `📊 Application Status Update
-      
-Application ID: ${leadId}
-Current Status: ${newStage}
-
-Your application is progressing. We'll keep you updated!`;
-
-      await WhatsAppAPI.sendTextMessage(customerPhone, message);
+      await BotBizWhatsAppAPI.sendTextMessage(customerPhone, message);
     } catch (error) {
       console.error('WhatsApp stage change error:', error);
     }

@@ -1,5 +1,5 @@
 import WhatsAppService from '../services/whatsappNotificationService.js';
-import WhatsAppAPI from '../integrations/whatsappApi.js';
+import BotBizWhatsAppAPI from '../integrations/whatsappApi.js';
 import multer from 'multer';
 
 // Configure multer for file uploads
@@ -46,13 +46,7 @@ export const sendMessage = async (req, res) => {
       return res.status(400).json({ error: 'Phone and message are required' });
     }
 
-    let result;
-    if (type === 'text') {
-      result = await WhatsAppAPI.sendTextMessage(phone, message);
-    } else if (type === 'template') {
-      const { templateName, parameters } = req.body;
-      result = await WhatsAppAPI.sendTemplateMessage(phone, templateName, parameters);
-    }
+    const result = await BotBizWhatsAppAPI.sendTextMessage(phone, message);
 
     res.json({ success: true, result });
   } catch (error) {
@@ -112,7 +106,7 @@ export const sendDocument = async (req, res) => {
     // Upload file to a temporary URL or use existing document URL
     const documentUrl = `${process.env.BASE_URL || 'http://localhost:5000'}/uploads/temp/${file.filename}`;
     
-    const result = await WhatsAppAPI.sendDocumentMessage(phone, documentUrl, file.originalname, caption);
+    const result = await BotBizWhatsAppAPI.sendDocumentMessage(phone, documentUrl, file.originalname, caption);
     
     res.json({ success: true, result });
   } catch (error) {
@@ -124,12 +118,12 @@ export const sendDocument = async (req, res) => {
 // Get WhatsApp API status
 export const getStatus = async (req, res) => {
   try {
-    // Check if WhatsApp API is configured
-    const isConfigured = !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+    // Check if BotBiz WhatsApp API is configured
+    const isConfigured = !!(process.env.BOTBIZ_API_TOKEN && process.env.BOTBIZ_PHONE_NUMBER_ID);
     
     res.json({
       configured: isConfigured,
-      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+      phoneNumberId: process.env.BOTBIZ_PHONE_NUMBER_ID || null,
       status: isConfigured ? 'ready' : 'not_configured'
     });
   } catch (error) {

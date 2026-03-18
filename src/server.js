@@ -27,6 +27,7 @@ import integrationRoutes from './routes/integrations.js';
 import timelineRoutes from './routes/timeline.js';
 import fieldPermissionRoutes from './routes/fieldPermissions.js';
 import applicationStageRoutes from './routes/applicationStages.js';
+import whatsappRoutes from './routes/whatsapp.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -74,6 +75,7 @@ app.use('/api/accountant', accountantRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/timeline', timelineRoutes);
 app.use('/api/application-stages', applicationStageRoutes);
+app.use('/api/whatsapp', whatsappRoutes);
 
 app.get('/', (req, res) => {
   res.json({

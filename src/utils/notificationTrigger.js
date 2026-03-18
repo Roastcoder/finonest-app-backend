@@ -6,6 +6,8 @@ const sendEmail = async (userId, title, message) => {
   console.log(`[EMAIL] To User ${userId}: ${title} - ${message}`);
 };
 
+import WhatsAppService from '../services/whatsappNotificationService.js';
+
 const sendSMS = async (userId, message) => {
   // TODO: Configure Twilio / MSG91 here
   console.log(`[SMS/WhatsApp] To User ${userId}: ${message}`);
@@ -28,20 +30,25 @@ export const createNotification = async (userId, type, title, message, relatedId
   }
 };
 
-export const notifyLeadCreated = async (leadId, assignedTo) => {
+export const notifyLeadCreated = async (leadId, assignedTo, customerName = '') => {
   await createNotification(assignedTo, 'lead_created', 'New Lead Assigned', 'A new lead has been assigned to you', leadId, 'lead');
+  await WhatsAppService.sendStaffNewLeadNotification(assignedTo, leadId, customerName);
+  await WhatsAppService.sendLoanApplicationConfirmation(leadId);
 };
 
 export const notifyStageChange = async (leadId, userId, fromStage, toStage) => {
   await createNotification(userId, 'stage_change', 'Lead Stage Updated', `Lead moved from ${fromStage} to ${toStage}`, leadId, 'lead');
+  await WhatsAppService.sendStageChangeNotification(leadId, toStage);
 };
 
-export const notifyDisbursement = async (leadId, userId, amount) => {
+export const notifyDisbursement = async (leadId, userId, amount, accountNumber = '') => {
   await createNotification(userId, 'disbursement', 'Loan Disbursed', `Loan of ₹${amount} has been disbursed`, leadId, 'lead');
+  await WhatsAppService.sendDisbursementNotification(leadId, amount, accountNumber);
 };
 
-export const notifyRejection = async (leadId, userId) => {
+export const notifyRejection = async (leadId, userId, reason = 'Please contact for details') => {
   await createNotification(userId, 'rejection', 'Application Rejected', 'Your loan application has been rejected', leadId, 'lead');
+  await WhatsAppService.sendLoanRejection(leadId, reason);
 };
 
 export const notifyPaymentRequest = async (userId, amount) => {

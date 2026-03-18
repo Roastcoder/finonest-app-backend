@@ -10,27 +10,41 @@ const notifyLeadCreated = async (leadId, assignedTo) => {
 
 export const getAllLeads = async (req, res) => {
   try {
+    // Check which optional columns exist
+    const colCheck = await db.query(`
+      SELECT column_name FROM information_schema.columns 
+      WHERE table_name = 'leads' 
+      AND column_name IN ('application_stage','converted_to_loan','stage_data','stage_history','current_landmark','our_branch','customer_id','sourcing_person_name')
+    `);
+    const existingCols = new Set(colCheck.rows.map(r => r.column_name));
+
+    const optionalSelects = [
+      existingCols.has('application_stage') ? `COALESCE(l.application_stage, 'SUBMITTED') as application_stage` : `'SUBMITTED' as application_stage`,
+      existingCols.has('converted_to_loan') ? `COALESCE(l.converted_to_loan, false) as converted_to_loan` : `false as converted_to_loan`,
+      existingCols.has('stage_data') ? `l.stage_data` : null,
+      existingCols.has('stage_history') ? `l.stage_history` : null,
+      existingCols.has('current_landmark') ? `l.current_landmark` : null,
+      existingCols.has('our_branch') ? `l.our_branch` : null,
+      existingCols.has('customer_id') ? `l.customer_id` : null,
+      existingCols.has('sourcing_person_name') ? `l.sourcing_person_name` : null,
+    ].filter(Boolean).join(',\n             ');
+
     let query = `
-      SELECT l.*, 
-             l.phone as phone_no,
-             l.vehicle_number as vehicle_no,
-             l.city as district,
-             l.current_landmark,
-             COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
-             l.stage_data,
-             l.stage_history,
-             COALESCE(l.converted_to_loan, false) as converted_to_loan
+      SELECT l.id, l.customer_name, l.phone, l.email, l.city, l.state,
+             l.vehicle_number, l.loan_amount_required, l.case_type, l.lead_type,
+             l.financier_id, l.assigned_to, l.created_by, l.created_at, l.updated_at,
+             l.phone as phone_no, l.vehicle_number as vehicle_no, l.city as district,
+             ${optionalSelects}
       FROM leads l
       WHERE 1=1
     `;
     
     const params = [];
     
-    // Hide all converted leads from lead list (shown only in loan applications list)
-    query += ` AND COALESCE(l.converted_to_loan, false) = false`;
-    
-    if (req.user.role === 'team_leader') {
-      // Team leaders see leads assigned to them, created by them, and leads from their team members
+    if (req.user.role === 'executive') {
+      query += ` AND (l.assigned_to = $1 OR l.created_by = $1)`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
       query += `
         AND (
           l.assigned_to = $1
@@ -40,26 +54,31 @@ export const getAllLeads = async (req, res) => {
         )
       `;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
-      // Managers and DSAs see leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Managers/Branch Managers see only their own leads + leads from their entire team hierarchy
       query += `
-        AND (l.assigned_to IN (
-          WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
-            UNION ALL
-            SELECT u.id FROM users u
-            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+        AND (
+          l.assigned_to = $1
+          OR l.created_by = $1
+          OR l.assigned_to IN (
+            WITH RECURSIVE team_hierarchy AS (
+              SELECT id FROM users WHERE reporting_to = $1
+              UNION ALL
+              SELECT u.id FROM users u
+              INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+            )
+            SELECT id FROM team_hierarchy
           )
-          SELECT id FROM team_hierarchy
-        ) OR l.created_by IN (
-          WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
-            UNION ALL
-            SELECT u.id FROM users u
-            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          OR l.created_by IN (
+            WITH RECURSIVE team_hierarchy AS (
+              SELECT id FROM users WHERE reporting_to = $1
+              UNION ALL
+              SELECT u.id FROM users u
+              INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+            )
+            SELECT id FROM team_hierarchy
           )
-          SELECT id FROM team_hierarchy
-        ))
+        )
       `;
       params.push(req.user.id);
     }
@@ -154,10 +173,11 @@ export const getLeadById = async (req, res) => {
         OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $2)
       )`;
       params.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa') {
-      // Managers and DSAs can access leads from their team leaders and all their team members
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
       query += ` AND (
-        l.assigned_to IN (
+        l.assigned_to = $2
+        OR l.created_by = $2
+        OR l.assigned_to IN (
           WITH RECURSIVE team_hierarchy AS (
             SELECT id FROM users WHERE reporting_to = $2
             UNION ALL

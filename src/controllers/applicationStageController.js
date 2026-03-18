@@ -214,7 +214,7 @@ export const getLeadsByStage = async (req, res) => {
                  OR l.created_by IN (SELECT id FROM users WHERE reporting_to = $${paramIndex}))`;
       params.push(req.user.id);
       paramIndex++;
-    } else if (req.user.role === 'manager') {
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager') {
       query += ` AND (l.assigned_to IN (
         WITH RECURSIVE team_hierarchy AS (
           SELECT id FROM users WHERE reporting_to = $${paramIndex}
@@ -249,7 +249,7 @@ export const getLeadsByStage = async (req, res) => {
       countQuery += ` AND (assigned_to IN (SELECT id FROM users WHERE reporting_to = $2) 
                       OR created_by IN (SELECT id FROM users WHERE reporting_to = $2))`;
       countParams.push(req.user.id);
-    } else if (req.user.role === 'manager') {
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager') {
       countQuery += ` AND (assigned_to IN (
         WITH RECURSIVE team_hierarchy AS (
           SELECT id FROM users WHERE reporting_to = $2

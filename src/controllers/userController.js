@@ -4,14 +4,33 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 
 export const getHierarchyTree = async (req, res) => {
   try {
-    const query = `
-      SELECT id, user_id, full_name, email, role, reporting_to, branch_id, dsa_id
-      FROM users
-      ORDER BY role DESC, full_name ASC
+    let query = `
+      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id, u.dsa_id,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
     `;
+    const params = [];
 
-    const result = await db.query(query);
-    res.json(result.rows);
+    if (req.user.role === 'sales_manager') {
+      query += ` WHERE u.reporting_to = $1`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'branch_manager') {
+      query += ` WHERE u.reporting_to = $1 OR u.role = 'executive'`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'dsa') {
+      query += ` WHERE u.dsa_id = $1`;
+      params.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
+      query += ` WHERE u.reporting_to = $1`;
+      params.push(req.user.id);
+    }
+    // admin sees all — no filter
+
+    query += ' ORDER BY role DESC, full_name ASC';
+    const result = await db.query(query, params);
+    const rows = result.rows.map(u => ({ ...u, role: u.role === 'manager' ? 'sales_manager' : u.role }));
+    res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -52,6 +71,7 @@ export const getAllUsers = async (req, res) => {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     }
+
 
     query += ' ORDER BY u.created_at DESC';
 
@@ -316,7 +336,34 @@ export const getManagerTeamHierarchy = async (req, res) => {
     let teamLeaders;
     
     // Different queries based on role
-    if (req.user.role === 'branch_manager') {
+    if (req.user.role === 'sales_manager') {
+      // sales_manager sees all branch_managers and DSAs reporting to them, with their team leaders
+      const directReports = await db.query(`
+        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+               b.name as branch_name
+        FROM users u
+        LEFT JOIN branches b ON u.branch_id = b.id
+        WHERE u.reporting_to = $1
+        ORDER BY u.full_name ASC
+      `, [req.user.id]);
+
+      if (directReports.rows.length === 0) return res.json([]);
+
+      const hierarchy = await Promise.all(
+        directReports.rows.map(async (report) => {
+          const teamMembers = await db.query(`
+            SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+                   b.name as branch_name
+            FROM users u
+            LEFT JOIN branches b ON u.branch_id = b.id
+            WHERE u.reporting_to = $1
+            ORDER BY u.full_name ASC
+          `, [report.id]);
+          return { ...report, team_members: teamMembers.rows };
+        })
+      );
+      return res.json(hierarchy);
+    } else if (req.user.role === 'branch_manager') {
       teamLeaders = await db.query(`
         SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                b.name as branch_name
@@ -331,7 +378,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
-        WHERE u.dsa_id = $1 AND u.role = 'team_leader'
+        WHERE (u.dsa_id = $1 OR u.reporting_to = $1) AND u.role = 'team_leader'
         ORDER BY u.full_name ASC
       `, [req.user.id]);
     } else {

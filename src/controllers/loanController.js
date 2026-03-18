@@ -63,14 +63,12 @@ export const getAllLoans = async (req, res) => {
       // Team leader sirf apni loans dekhega
       conditions.push('l.created_by = $1');
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
-      // Manager, DSA, and Branch Manager can see:
-      // 1. Loans created by their team
-      // 2. Loans assigned to them
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Manager, DSA, and Branch Manager can see loans created by their team
       conditions.push(`(
         l.created_by IN (
           WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $1
+            SELECT id FROM users WHERE reporting_to = $1 OR dsa_id = $1
             UNION ALL
             SELECT u.id FROM users u
             INNER JOIN team_hierarchy t ON u.reporting_to = t.id
@@ -78,6 +76,7 @@ export const getAllLoans = async (req, res) => {
           SELECT id FROM team_hierarchy
         )
         OR l.assigned_to = $1
+        OR l.created_by = $1
       )`);
       values.push(req.user.id);
     }
@@ -161,14 +160,11 @@ export const getLoanById = async (req, res) => {
     } else if (req.user.role === 'team_leader') {
       query += ' AND l.created_by = $2';
       values.push(req.user.id);
-    } else if (req.user.role === 'manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
-      // Manager, DSA, and Branch Manager can see:
-      // 1. Loans created by their team
-      // 2. Loans assigned to them
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
       query += ` AND (
         l.created_by IN (
           WITH RECURSIVE team_hierarchy AS (
-            SELECT id FROM users WHERE reporting_to = $2
+            SELECT id FROM users WHERE reporting_to = $2 OR dsa_id = $2
             UNION ALL
             SELECT u.id FROM users u
             INNER JOIN team_hierarchy t ON u.reporting_to = t.id
@@ -176,6 +172,7 @@ export const getLoanById = async (req, res) => {
           SELECT id FROM team_hierarchy
         )
         OR l.assigned_to = $2
+        OR l.created_by = $2
       )`;
       values.push(req.user.id);
     }
@@ -285,6 +282,24 @@ export const createLoan = async (req, res) => {
       our_branch: req.body.our_branch || null,
       income_source: req.body.income_source || null,
       monthly_income: req.body.monthly_income || null,
+      company_name: req.body.company_name || null,
+      designation: req.body.designation || null,
+      work_experience: req.body.work_experience || null,
+      current_job_years: req.body.current_job_years || null,
+      total_work_exp: req.body.total_work_exp || null,
+      net_monthly_salary: req.body.net_monthly_salary || null,
+      salary_credit_mode: req.body.salary_credit_mode || null,
+      salary_slip_available: req.body.salary_slip_available || null,
+      profile: req.body.profile || null,
+      itr_available: req.body.itr_available || null,
+      annual_income_itr: req.body.annual_income_itr || null,
+      business_name: req.body.business_name || null,
+      business_type: req.body.business_type || null,
+      business_vintage: req.body.business_vintage || null,
+      professional_subtype: req.body.professional_subtype || null,
+      practice_experience: req.body.practice_experience || null,
+      freelancer_subtype: req.body.freelancer_subtype || null,
+      other_income_type: req.body.other_income_type || null,
       selected_financier: req.body.selected_financier || null,
       financier_location: req.body.financier_location || null,
       loan_amount: req.body.loan_amount || 0,
@@ -335,6 +350,13 @@ export const createLoan = async (req, res) => {
       net_disbursement_amount: req.body.net_disbursement_amount || null,
       payment_received_date: req.body.payment_received_date || null,
       rc_owner_name: req.body.rc_owner_name || null,
+      existing_loan_status: req.body.existing_loan_status || null,
+      existing_loan_amount: req.body.existing_loan_amount ? Number(req.body.existing_loan_amount) : null,
+      existing_tenure: req.body.existing_tenure ? Number(req.body.existing_tenure) : null,
+      existing_emi: req.body.existing_emi ? Number(req.body.existing_emi) : null,
+      no_of_emi_paid: req.body.no_of_emi_paid ? Number(req.body.no_of_emi_paid) : null,
+      bouncing_3_months: req.body.bouncing_last_3m != null ? Number(req.body.bouncing_last_3m) : (req.body.bouncing_3_months != null ? Number(req.body.bouncing_3_months) : null),
+      bouncing_6_months: req.body.bouncing_last_6m != null ? Number(req.body.bouncing_last_6m) : (req.body.bouncing_6_months != null ? Number(req.body.bouncing_6_months) : null),
       rto_agent_name: req.body.rto_agent_name || null,
       agent_mobile_no: req.body.agent_mobile_no || null,
       login_date: req.body.login_date || null,
@@ -368,7 +390,7 @@ export const createLoan = async (req, res) => {
     if (filteredData.lead_id) {
       console.log(`Marking lead ${filteredData.lead_id} as converted...`);
       const updateResult = await client.query(
-        'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW() WHERE id = $1 RETURNING id, customer_name, converted_to_loan',
+        'UPDATE leads SET converted_to_loan = true, loan_created_at = NOW(), application_stage = \'DISBURSED\' WHERE id = $1 RETURNING id, customer_name, converted_to_loan',
         [filteredData.lead_id]
       );
       if (updateResult.rows.length > 0) {
@@ -414,6 +436,140 @@ export const deleteLoan = async (req, res) => {
     res.json({ message: 'Loan deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+export const updateLoan = async (req, res) => {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    const loanId = req.params.id;
+    
+    // Get existing columns from loans table
+    const columnsResult = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'loans'
+    `);
+    const existingColumns = columnsResult.rows.map(r => r.column_name);
+    
+    // Build update data with all possible fields
+    const updateData = {
+      existing_loan_status: req.body.existing_loan_status !== undefined ? req.body.existing_loan_status : undefined,
+      existing_loan_amount: req.body.existing_loan_amount !== undefined ? Number(req.body.existing_loan_amount) : undefined,
+      existing_tenure: req.body.existing_tenure !== undefined ? Number(req.body.existing_tenure) : undefined,
+      existing_emi: req.body.existing_emi !== undefined ? Number(req.body.existing_emi) : undefined,
+      no_of_emi_paid: req.body.no_of_emi_paid !== undefined ? Number(req.body.no_of_emi_paid) : undefined,
+      bouncing_3_months: req.body.bouncing_3_months !== undefined ? Number(req.body.bouncing_3_months) : undefined,
+      bouncing_6_months: req.body.bouncing_6_months !== undefined ? Number(req.body.bouncing_6_months) : undefined,
+      applicant_name: req.body.applicant_name,
+      mobile: req.body.mobile,
+      email: req.body.email,
+      co_applicant_name: req.body.co_applicant_name,
+      co_applicant_mobile: req.body.co_applicant_mobile,
+      guarantor_name: req.body.guarantor_name,
+      guarantor_mobile: req.body.guarantor_mobile,
+      current_address: req.body.current_address,
+      current_landmark: req.body.current_landmark,
+      current_district: req.body.current_district,
+      current_state: req.body.current_state,
+      current_pincode: req.body.current_pincode,
+      vehicle_number: req.body.vehicle_number,
+      maker_name: req.body.maker_name,
+      model_variant_name: req.body.model_variant_name,
+      engine_number: req.body.engine_number,
+      chassis_number: req.body.chassis_number,
+      owner_name: req.body.owner_name,
+      fuel_type: req.body.fuel_type,
+      manufacturing_date: req.body.manufacturing_date,
+      ownership_type: req.body.ownership_type,
+      financer: req.body.financer,
+      finance_status: req.body.finance_status,
+      insurance_company: req.body.insurance_company,
+      insurance_valid_upto: req.body.insurance_valid_upto,
+      pucc_valid_upto: req.body.pucc_valid_upto,
+      case_type: req.body.case_type,
+      emi_amount: req.body.emi_amount,
+      tenure: req.body.tenure,
+      total_interest: req.body.total_interest,
+      loan_amount: req.body.loan_amount,
+      selected_financier: req.body.selected_financier,
+      financier_location: req.body.financier_location,
+      financier_name: req.body.financier_name,
+      insurance_company_name: req.body.insurance_company_name,
+      premium_amount: req.body.premium_amount,
+      total_deduction: req.body.total_deduction,
+      net_disbursement_amount: req.body.net_disbursement_amount,
+      payment_received_date: req.body.payment_received_date,
+      rc_owner_name: req.body.rc_owner_name,
+      rto_agent_name: req.body.rto_agent_name,
+      agent_mobile_no: req.body.agent_mobile_no,
+      login_date: req.body.login_date,
+      approval_date: req.body.approval_date,
+      assigned_to: req.body.assigned_to,
+      // Income fields
+      income_source: req.body.income_source,
+      monthly_income: req.body.monthly_income !== undefined ? (req.body.monthly_income ? Number(req.body.monthly_income) : null) : undefined,
+      company_name: req.body.company_name,
+      designation: req.body.designation,
+      work_experience: req.body.work_experience,
+      current_job_years: req.body.current_job_years,
+      total_work_exp: req.body.total_work_exp,
+      net_monthly_salary: req.body.net_monthly_salary !== undefined ? (Number(req.body.net_monthly_salary) || null) : undefined,
+      salary_credit_mode: req.body.salary_credit_mode,
+      salary_slip_available: req.body.salary_slip_available,
+      profile: req.body.profile,
+      itr_available: req.body.itr_available,
+      annual_income_itr: req.body.annual_income_itr !== undefined ? (Number(req.body.annual_income_itr) || null) : undefined,
+      business_name: req.body.business_name,
+      business_type: req.body.business_type,
+      business_vintage: req.body.business_vintage,
+      professional_subtype: req.body.professional_subtype,
+      practice_experience: req.body.practice_experience,
+      freelancer_subtype: req.body.freelancer_subtype,
+      other_income_type: req.body.other_income_type,
+      our_branch: req.body.our_branch,
+      sourcing_person_name: req.body.sourcing_person_name,
+      remark: req.body.remark,
+    };
+    
+    // Filter: remove undefined AND columns that don't exist in table
+    const filteredData = Object.fromEntries(
+      Object.entries(updateData)
+        .filter(([key, value]) => value !== undefined && existingColumns.includes(key))
+    );
+    
+    if (Object.keys(filteredData).length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+    
+    // Build SET clause
+    const setClause = Object.keys(filteredData)
+      .map((key, i) => `${key} = $${i + 1}`)
+      .join(', ');
+    
+    const values = [...Object.values(filteredData), loanId];
+    
+    const result = await client.query(
+      `UPDATE loans SET ${setClause}, updated_at = NOW() WHERE id = $${values.length} RETURNING *`,
+      values
+    );
+    
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Loan not found' });
+    }
+    
+    await client.query('COMMIT');
+    res.json({ message: 'Loan updated successfully', loan: result.rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Update loan error:', error.message);
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 
@@ -510,21 +666,48 @@ export const updateLoanStage = async (req, res) => {
       historyLength: updatedHistory.length
     });
     
-    // Update the loan's current stage - pass objects directly, not JSON strings
+    // Build extra column updates for stage-specific fields
+    const extraCols = [];
+    const extraVals = [];
+
+    if (stageData.stage === 'LOGIN') {
+      extraCols.push('app_score', 'credit_score');
+      extraVals.push(stageData.appScore || null, stageData.creditScore || null);
+    } else if (stageData.stage === 'IN_PROCESS') {
+      extraCols.push('tags');
+      extraVals.push(stageData.tags || []);
+    } else if (stageData.stage === 'APPROVED') {
+      extraCols.push('roi', 'tenure', 'approval_remarks');
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAmount ? `Approved amount: ${stageData.loanAmount}` : null);
+    } else if (stageData.stage === 'DISBURSED') {
+      extraCols.push('roi', 'tenure', 'loan_account_number', 'rc_type', 'rc_collected_by', 'disbursement_date', 'rto_agent_name_rc', 'rto_agent_mobile', 'banker_name', 'banker_mobile');
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, new Date().toISOString(), stageData.agentName || null, stageData.agentMobile || null, stageData.bankerName || null, stageData.bankerMobile || null);
+    } else if (stageData.stage === 'REJECTED') {
+      extraCols.push('rejection_remarks');
+      extraVals.push(stageData.remarks || null);
+    } else if (stageData.stage === 'CANCELLED') {
+      extraCols.push('cancellation_remarks');
+      extraVals.push(stageData.remarks || null);
+    }
+
+    // Base params: $1=stage, $2=stage_data, $3=stage_history, then extra cols, last=loanId
+    const baseVals = [stageData.stage, newStageEntry, updatedHistory, ...extraVals, loanId];
+    const extraSetClauses = extraCols.map((col, i) => `${col} = $${i + 4}`).join(', ');
+    const idParam = `$${baseVals.length}`;
+    const extraSet = extraSetClauses ? `, ${extraSetClauses}` : '';
+
+    // Update the loan's current stage
     const updateResult = await db.query(
       `UPDATE loans 
        SET application_stage = $1, 
            stage_data = $2, 
-           stage_history = $3, 
+           stage_history = $3
+           ${extraSet},
+           stage_changed_at = NOW(),
            updated_at = NOW() 
-       WHERE id = $4 
+       WHERE id = ${idParam}
        RETURNING id, application_stage`,
-      [
-        stageData.stage, 
-        newStageEntry,  // Pass object directly for JSONB column
-        updatedHistory, // Pass array directly for JSONB column
-        loanId
-      ]
+      baseVals
     );
     
     if (updateResult.rows.length === 0) {

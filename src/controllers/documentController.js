@@ -198,7 +198,13 @@ export const deleteDocument = async (req, res) => {
 
 export const downloadDocument = async (req, res) => {
   try {
-    console.log('Download request for document ID:', req.params.id);
+    // Support token via query param for iframe preview
+    if (!req.user && req.query.token) {
+      try {
+        const jwt = await import('jsonwebtoken');
+        req.user = jwt.default.verify(req.query.token, process.env.JWT_SECRET || 'your-secret-key');
+      } catch { return res.status(401).json({ error: 'Invalid token' }); }
+    }
     
     const result = await db.query(
       'SELECT file_path, file_name, document_type FROM documents WHERE id = $1',
@@ -213,31 +219,19 @@ export const downloadDocument = async (req, res) => {
     const { file_path, file_name, document_type } = result.rows[0];
     console.log('Document found in DB:', { file_path, file_name, document_type });
     
-    // Resolve path robustly
-    let resolvedPath = file_path;
+    // Normalize path: replace backslashes with forward slashes (Windows paths stored in DB)
+    const normalizedFilePath = file_path.replace(/\\/g, '/');
     
-    // If it's not absolute or exists as is, try it
-    if (!path.isAbsolute(resolvedPath)) {
-      resolvedPath = path.join(process.cwd(), resolvedPath);
-    }
+    // Always resolve using just the filename to handle cross-platform path issues
+    const fileNameInStorage = normalizedFilePath.split('/').pop();
+    let resolvedPath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
     
-    // If the path doesn't exist, try resolving just the filename in the uploads/documents directory
-    // This handles cases where absolute paths from other environments (like Windows) were stored
+    // Fallback: try the stored path as-is (relative or absolute)
     if (!fs.existsSync(resolvedPath)) {
-      // Robustly get filename regardless of source path separator (/ or \)
-      const fileNameInStorage = file_path.split(/[\\/]/).pop();
-      const alternativePath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
-      console.log('Original path not found, checking alternative:', alternativePath);
-      
-      if (fs.existsSync(alternativePath)) {
-        resolvedPath = alternativePath;
-      } else {
-        // Also check directly in 'uploads' in case they were uploaded there before our change
-        const altPath2 = path.join(process.cwd(), 'uploads', fileNameInStorage);
-        if (fs.existsSync(altPath2)) {
-          resolvedPath = altPath2;
-        }
-      }
+      const fallback = path.isAbsolute(normalizedFilePath)
+        ? normalizedFilePath
+        : path.join(process.cwd(), normalizedFilePath);
+      if (fs.existsSync(fallback)) resolvedPath = fallback;
     }
 
     if (!fs.existsSync(resolvedPath)) {

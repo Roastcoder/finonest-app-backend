@@ -1,6 +1,10 @@
 export const toPostgresParams = (obj) => {
-  const keys = Object.keys(obj);
-  const values = Object.values(obj);
+  // Filter out null and undefined values
+  const filteredObj = Object.fromEntries(
+    Object.entries(obj).filter(([_, value]) => value !== null && value !== undefined)
+  );
+  const keys = Object.keys(filteredObj);
+  const values = Object.values(filteredObj);
   const params = keys.map((_, i) => `$${i + 1}`).join(', ');
   return { keys, values, params };
 };

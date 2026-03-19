@@ -194,6 +194,7 @@ export const createUser = async (req, res) => {
     };
 
     const { keys, values, params } = toPostgresParams(userData);
+    console.log('Creating user with data:', { keys, values });
     const result = await client.query(
       `INSERT INTO users (${keys.join(', ')}) VALUES (${params}) RETURNING id, user_id`,
       values

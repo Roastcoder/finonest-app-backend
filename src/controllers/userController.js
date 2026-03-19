@@ -181,7 +181,7 @@ export const createUser = async (req, res) => {
 
     // Generate unique user ID
     const seqResult = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\\\d+$') AS INTEGER)), 0) + 1 as next_seq
        FROM users`
     );
 
@@ -268,6 +268,11 @@ export const updateUser = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
+    // Only admin can delete users
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can delete users' });
+    }
+
     // Check if user has any dependencies
     const dependencies = await db.query(
       'SELECT COUNT(*) as count FROM users WHERE reporting_to = $1 OR dsa_id = $1',

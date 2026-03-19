@@ -37,7 +37,8 @@ export const login = async (req, res) => {
         email: user.email, 
         role: user.role,
         manager_name: user.manager_name,
-        manager_role: user.manager_role
+        manager_role: user.manager_role,
+        branch_id: user.branch_id
       }
     });
   } catch (error) {
@@ -56,8 +57,7 @@ export const signup = async (req, res) => {
     // Generate unique user ID
     const seqResult = await client.query(
       `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
-       FROM users 
-       FOR UPDATE`
+       FROM users`
     );
     
     const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
@@ -65,8 +65,8 @@ export const signup = async (req, res) => {
     const userId = `${initials}-${sequence}`;
     
     const result = await client.query(
-      'INSERT INTO users (user_id, full_name, email, password, phone, role, reporting_to, branch, joining_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, user_id',
-      [userId, name, email, hashedPassword, phone || null, role, reporting_to || null, branch || null, joining_date || new Date()]
+      'INSERT INTO users (user_id, full_name, name, email, password, phone, role, reporting_to, branch, joining_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, user_id',
+      [userId, name, name, email, hashedPassword, phone || null, role, reporting_to || null, branch || null, joining_date || new Date(), 'active']
     );
 
     await client.query('COMMIT');
@@ -89,9 +89,11 @@ export const signup = async (req, res) => {
 export const getProfile = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT u.id, u.full_name as name, u.email, u.role, u.phone, u.status, u.reporting_to,
+      SELECT u.id, u.full_name as name, u.email, u.role, u.phone, u.status, u.reporting_to, u.branch_id,
+             b.name as branch_name,
              m.full_name as manager_name, m.role as manager_role
       FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
       LEFT JOIN users m ON u.reporting_to = m.id
       WHERE u.id = $1
     `, [req.user.id]);

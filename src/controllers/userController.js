@@ -181,7 +181,8 @@ export const createUser = async (req, res) => {
 
     const userData = {
       user_id: userId,
-      full_name,
+      name: full_name,
+      full_name: full_name,
       email,
       password: hashedPassword,
       phone: phone || null,
@@ -201,10 +202,19 @@ export const createUser = async (req, res) => {
     );
 
     await client.query('COMMIT');
+    
+    // Fetch the created user with branch name
+    const createdUser = await client.query(`
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      WHERE u.id = $1
+    `, [result.rows[0].id]);
+    
     res.status(201).json({
       message: 'User created successfully',
-      userId: result.rows[0].id,
-      user_id: result.rows[0].user_id
+      user: createdUser.rows[0]
     });
   } catch (error) {
     await client.query('ROLLBACK');

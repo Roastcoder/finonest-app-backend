@@ -126,14 +126,19 @@ export const createUser = async (req, res) => {
 
     // Permission checks based on user role
     if (req.user.role === 'sales_manager') {
-      if (!['branch_manager', 'dsa'].includes(role)) {
+      if (!['branch_manager', 'dsa', 'team_leader', 'executive'].includes(role)) {
         await client.query('ROLLBACK');
-        return res.status(403).json({ error: 'Sales managers can only create branch managers and DSAs' });
+        return res.status(403).json({ error: 'Sales managers can only create branch managers, DSAs, team leaders, and executives' });
       }
       // Branch manager must have branch_id
       if (role === 'branch_manager' && !branch_id) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'branch_id is required for branch managers' });
+      }
+      // Team leader must have branch_id
+      if (role === 'team_leader' && !branch_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'branch_id is required for team leaders' });
       }
     } else if (req.user.role === 'branch_manager') {
       if (!['team_leader', 'executive'].includes(role)) {

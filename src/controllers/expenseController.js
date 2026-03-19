@@ -87,7 +87,7 @@ export const createExpense = async (req, res) => {
       description: req.body.description,
       amount: req.body.amount,
       expense_date: req.body.expense_date,
-      document_path: req.file ? req.file.path : null,
+      document_path: req.file ? `/uploads/expenses/${req.file.filename}` : null,
       status: 'pending'
     };
     

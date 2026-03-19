@@ -1,7 +1,7 @@
 export const toPostgresParams = (obj) => {
-  // Filter out null and undefined values
+  // Filter out null, undefined, and empty string values
   const filteredObj = Object.fromEntries(
-    Object.entries(obj).filter(([_, value]) => value !== null && value !== undefined)
+    Object.entries(obj).filter(([_, value]) => value !== null && value !== undefined && value !== '')
   );
   const keys = Object.keys(filteredObj);
   const values = Object.values(filteredObj);

@@ -150,12 +150,22 @@ export const createUser = async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'DSAs can only create team leaders and executives' });
       }
+      // Team leaders created by DSA must have branch_id
+      if (role === 'team_leader' && !branch_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'branch_id is required for team leaders' });
+      }
     } else if (req.user.role === 'team_leader') {
       if (role !== 'executive') {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'Team leaders can only create executives' });
       }
-    } else if (req.user.role !== 'admin') {
+    } else if (req.user.role === 'admin') {
+      if (role === 'team_leader' && !branch_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'branch_id is required for team leaders' });
+      }
+    } else {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Insufficient permissions' });
     }

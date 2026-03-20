@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import db from './config/database.js';
 import authRoutes from './routes/auth.js';
 import loanRoutes from './routes/loans.js';
 import bankRoutes from './routes/banks.js';
@@ -95,6 +96,47 @@ app.use(errorHandler);
 
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
+
+  // Create bank_branches table if not exists
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS bank_branches (
+        id SERIAL PRIMARY KEY,
+        bank_id INTEGER NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
+        branch_name VARCHAR(255) NOT NULL,
+        location VARCHAR(255),
+        geo_limit VARCHAR(50),
+        product VARCHAR(255),
+        sales_manager_name VARCHAR(255),
+        sales_manager_mobile VARCHAR(20),
+        area_sales_manager_name VARCHAR(255),
+        area_sales_manager_mobile VARCHAR(20),
+        status VARCHAR(20) DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ bank_branches table ready');
+  } catch (err) {
+    console.error('❌ bank_branches table init failed:', err.message);
+  }
+
+  // Add branch/SM/AM columns to loans table if not exists
+  const newCols = [
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_branch_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_executive_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_executive_mobile VARCHAR(20)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_mobile VARCHAR(20)',
+  ];
+  for (const sql of newCols) {
+    try {
+      await db.query(sql);
+    } catch (err) {
+      console.error('❌ Column migration failed:', err.message);
+    }
+  }
+  console.log('✅ loans branch/SM/AM columns ready');
   
   // Initialize application stage jobs
   try {

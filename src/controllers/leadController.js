@@ -34,6 +34,7 @@ export const getAllLeads = async (req, res) => {
              l.vehicle_number, l.loan_amount_required, l.case_type, l.lead_type,
              l.financier_id, l.assigned_to, l.created_by, l.created_at, l.updated_at,
              l.phone as phone_no, l.vehicle_number as vehicle_no, l.city as district,
+             l.current_address, l.pincode,
              ${optionalSelects}
       FROM leads l
       WHERE 1=1

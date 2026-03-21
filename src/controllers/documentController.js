@@ -102,29 +102,44 @@ export const uploadDocument = async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const { lead_id, document_type } = req.body;
+    const { lead_id, loan_id, document_type } = req.body;
     
-    if (!lead_id || !document_type) {
-      // Clean up uploaded file if validation fails
+    if (!document_type) {
       fs.unlinkSync(req.file.path);
-      return res.status(400).json({ error: 'Lead ID and document type are required' });
+      return res.status(400).json({ error: 'Document type is required' });
+    }
+    if (!lead_id && !loan_id) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Lead ID or Loan ID is required' });
     }
 
-    // Verify lead exists
-    const leadCheck = await db.query('SELECT id FROM leads WHERE id = $1', [lead_id]);
-    if (leadCheck.rows.length === 0) {
-      fs.unlinkSync(req.file.path);
-      return res.status(404).json({ error: 'Lead not found' });
+    // Verify lead exists if lead_id provided
+    if (lead_id) {
+      const leadCheck = await db.query('SELECT id FROM leads WHERE id = $1', [lead_id]);
+      if (leadCheck.rows.length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({ error: 'Lead not found' });
+      }
+    }
+
+    // Verify loan exists if loan_id provided
+    if (loan_id) {
+      const loanCheck = await db.query('SELECT id, lead_id FROM loans WHERE id = $1', [loan_id]);
+      if (loanCheck.rows.length === 0) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({ error: 'Loan not found' });
+      }
     }
 
     const documentData = {
-      lead_id: parseInt(lead_id),
       document_type,
       file_path: path.relative(process.cwd(), req.file.path),
       file_name: req.file.originalname,
       file_size: req.file.size,
       uploaded_by: req.user.id,
-      status: 'pending'
+      status: 'pending',
+      ...(lead_id ? { lead_id: parseInt(lead_id) } : {}),
+      ...(loan_id ? { loan_id: parseInt(loan_id) } : {}),
     };
 
     const { keys, values, params } = toPostgresParams(documentData);

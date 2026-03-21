@@ -142,7 +142,10 @@ export const getLoanById = async (req, res) => {
              l.banker_mobile,
              l.stage_changed_at,
              l.stage_data,
-             l.stage_history
+             l.stage_history,
+             l.rejection_remarks,
+             l.cancellation_remarks,
+             l.remark
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id

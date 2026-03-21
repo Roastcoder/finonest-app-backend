@@ -14,15 +14,30 @@ router.get('/:id/documents', async (req, res) => {
     const loanResult = await db.query('SELECT lead_id FROM loans WHERE id = $1', [req.params.id]);
     if (loanResult.rows.length === 0) return res.status(404).json({ error: 'Loan not found' });
     const { lead_id } = loanResult.rows[0];
-    if (!lead_id) return res.json([]);
-    const docs = await db.query(
-      `SELECT d.*, COALESCE(u.full_name, u.user_id) as uploaded_by_name
-       FROM documents d
-       LEFT JOIN users u ON d.uploaded_by = u.id
-       WHERE d.lead_id = $1
-       ORDER BY d.document_type, d.created_at DESC`,
-      [lead_id]
-    );
+
+    // Fetch by loan_id if available, else by lead_id
+    let docs;
+    const hasLoanIdCol = await db.query(`SELECT 1 FROM information_schema.columns WHERE table_name='documents' AND column_name='loan_id'`);
+    if (hasLoanIdCol.rows.length > 0) {
+      docs = await db.query(
+        `SELECT d.*, COALESCE(u.full_name, u.user_id) as uploaded_by_name
+         FROM documents d
+         LEFT JOIN users u ON d.uploaded_by = u.id
+         WHERE d.loan_id = $1 OR ($2::int IS NOT NULL AND d.lead_id = $2)
+         ORDER BY d.document_type, d.created_at DESC`,
+        [req.params.id, lead_id || null]
+      );
+    } else {
+      if (!lead_id) return res.json([]);
+      docs = await db.query(
+        `SELECT d.*, COALESCE(u.full_name, u.user_id) as uploaded_by_name
+         FROM documents d
+         LEFT JOIN users u ON d.uploaded_by = u.id
+         WHERE d.lead_id = $1
+         ORDER BY d.document_type, d.created_at DESC`,
+        [lead_id]
+      );
+    }
     res.json(docs.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -29,6 +29,7 @@ import timelineRoutes from './routes/timeline.js';
 import fieldPermissionRoutes from './routes/fieldPermissions.js';
 import applicationStageRoutes from './routes/applicationStages.js';
 import whatsappRoutes from './routes/whatsapp.js';
+import kycRoutes from './routes/kyc.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -49,6 +50,7 @@ app.use('/uploads', express.static('uploads'));
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/kyc', kycRoutes);
 app.use('/api/loans', loanRoutes);
 app.use('/api/banks', bankRoutes);
 app.use('/api/brokers', brokerRoutes);

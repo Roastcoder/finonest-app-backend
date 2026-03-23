@@ -5,13 +5,13 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Use individual connection parameters instead of DATABASE_URL
+// Use individual connection parameters from .env file
 const pool = new Pool({
-  host: process.env.DB_HOST || '72.61.238.231',
-  port: parseInt(process.env.DB_PORT) || 3000,
-  database: process.env.DB_NAME || 'board',
-  user: process.env.DB_USER || 'Board',
-  password: process.env.DB_PASSWORD || 'Sanam@28',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT) || 5432,
+  database: process.env.DB_NAME || 'car_credit_hub',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'your_password',
   ssl: false,
   // Connection pool settings
   max: 20,
@@ -35,7 +35,7 @@ pool.connect((err, client, release) => {
       user: process.env.DB_USER
     });
   } else {
-    console.log('✅ Database connected successfully via TCP connection');
+    console.log('✅ Database connected successfully');
     console.log('✅ Connected to:', `${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
     release();
   }

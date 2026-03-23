@@ -5,7 +5,7 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 export const getHierarchyTree = async (req, res) => {
   try {
     let query = `
-      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id, u.dsa_id,
+      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id, u.dsa_id, u.status, u.refer_code,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -25,7 +25,7 @@ export const getHierarchyTree = async (req, res) => {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     }
-    // admin sees all — no filter
+    // admin and operation_team see all — no filter
 
     query += ' ORDER BY role DESC, full_name ASC';
     const result = await db.query(query, params);
@@ -70,6 +70,10 @@ export const getAllUsers = async (req, res) => {
     else if (req.user.role === 'sales_manager') {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
+    }
+    // operation_team can see all users
+    else if (req.user.role === 'operation_team') {
+      // No filter - can see all users
     }
 
 
@@ -118,7 +122,7 @@ export const createUser = async (req, res) => {
     }
 
     // Role-based permissions
-    const validRoles = ['admin', 'sales_manager', 'branch_manager', 'dsa', 'team_leader', 'executive'];
+    const validRoles = ['admin', 'operation_team', 'sales_manager', 'branch_manager', 'dsa', 'team_leader', 'executive'];
     if (!validRoles.includes(role)) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Invalid role' });
@@ -165,7 +169,7 @@ export const createUser = async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(403).json({ error: 'Team leaders can only create executives' });
       }
-    } else if (req.user.role === 'admin') {
+    } else if (req.user.role === 'admin' || req.user.role === 'operation_team') {
       if (role === 'team_leader' && !branch_id) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'branch_id is required for team leaders' });
@@ -205,7 +209,7 @@ export const createUser = async (req, res) => {
       reporting_to: reporting_to || null,
       dsa_id: dsa_id || null,
       joining_date: new Date().toISOString().split('T')[0],
-      status: 'active'
+      status: 'pending'
     };
 
     const { keys, values, params } = toPostgresParams(userData);
@@ -215,11 +219,44 @@ export const createUser = async (req, res) => {
       values
     );
 
-    await client.query('COMMIT');
+    // Generate refer code for eligible roles
+    let referCode = null;
+    if (['team_leader', 'branch_manager', 'dsa'].includes(role)) {
+      // Generate 8 character alphanumeric refer code
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      referCode = '';
+      for (let i = 0; i < 8; i++) {
+        referCode += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      
+      // Ensure uniqueness
+      let isUnique = false;
+      while (!isUnique) {
+        const existingCode = await client.query(
+          'SELECT id FROM users WHERE refer_code = $1',
+          [referCode]
+        );
+        if (existingCode.rows.length === 0) {
+          isUnique = true;
+        } else {
+          // Generate new code if duplicate found
+          referCode = '';
+          for (let i = 0; i < 8; i++) {
+            referCode += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+        }
+      }
+      
+      // Update user with refer code
+      await client.query(
+        'UPDATE users SET refer_code = $1 WHERE id = $2',
+        [referCode, result.rows[0].id]
+      );
+    }
     
     // Fetch the created user with branch name
     const createdUser = await client.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at, u.refer_code,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -243,7 +280,10 @@ export const createUser = async (req, res) => {
 };
 
 export const updateUser = async (req, res) => {
+  const client = await db.connect();
   try {
+    await client.query('BEGIN');
+    
     const { password, role, branch_id, reporting_to, dsa_id, ...userData } = req.body;
     const updates = { ...userData };
 
@@ -256,17 +296,61 @@ export const updateUser = async (req, res) => {
     if (dsa_id !== undefined) updates.dsa_id = dsa_id;
 
     const { query, values } = buildUpdateQuery('users', updates, req.params.id);
-    const result = await db.query(query, values);
+    const result = await client.query(query, values);
+    
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'User not found' });
     }
+
+    // Generate refer code if role changed to eligible role and user doesn't have one
+    if (role && ['team_leader', 'branch_manager', 'dsa'].includes(role)) {
+      const userCheck = await client.query(
+        'SELECT refer_code FROM users WHERE id = $1',
+        [req.params.id]
+      );
+      
+      if (userCheck.rows.length > 0 && !userCheck.rows[0].refer_code) {
+        // Generate 8 character alphanumeric refer code
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let referCode = '';
+        let isUnique = false;
+        
+        while (!isUnique) {
+          referCode = '';
+          for (let i = 0; i < 8; i++) {
+            referCode += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+          
+          const existingCode = await client.query(
+            'SELECT id FROM users WHERE refer_code = $1',
+            [referCode]
+          );
+          
+          if (existingCode.rows.length === 0) {
+            isUnique = true;
+          }
+        }
+        
+        // Update user with refer code
+        await client.query(
+          'UPDATE users SET refer_code = $1 WHERE id = $2',
+          [referCode, req.params.id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
     res.json({ message: 'User updated successfully' });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Update user error:', error);
     if (error.code === '23505') {
       return res.status(400).json({ error: 'Email already exists' });
     }
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 
@@ -399,7 +483,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
-        WHERE u.reporting_to = $1 AND u.role = 'team_leader'
+        WHERE u.reporting_to = $1
         ORDER BY u.full_name ASC
       `, [req.user.id]);
     } else if (req.user.role === 'dsa') {
@@ -408,7 +492,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
-        WHERE (u.dsa_id = $1 OR u.reporting_to = $1) AND u.role = 'team_leader'
+        WHERE u.reporting_to = $1
         ORDER BY u.full_name ASC
       `, [req.user.id]);
     } else {
@@ -445,6 +529,116 @@ export const getManagerTeamHierarchy = async (req, res) => {
   }
 };
 
+export const approveUser = async (req, res) => {
+  try {
+    const result = await db.query(
+      'UPDATE users SET status = $1 WHERE id = $2 RETURNING id, full_name, status',
+      ['active', req.params.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'User approved successfully', user: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const rejectUser = async (req, res) => {
+  try {
+    const result = await db.query(
+      'UPDATE users SET status = $1 WHERE id = $2 RETURNING id, full_name, status',
+      ['rejected', req.params.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ message: 'User rejected successfully', user: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const updateExistingUsersStatus = async (req, res) => {
+  try {
+    // Only admin can run this
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can update user statuses' });
+    }
+
+    const result = await db.query(
+      "UPDATE users SET status = 'active' WHERE status IS NULL OR status = '' OR status = 'pending'"
+    );
+    
+    res.json({ 
+      message: `Updated ${result.rowCount} users to active status`,
+      updatedCount: result.rowCount 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const generateReferCodes = async (req, res) => {
+  try {
+    // Only admin can run this
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can generate refer codes' });
+    }
+
+    const client = await db.connect();
+    try {
+      // Get users who need refer codes
+      const usersResult = await client.query(`
+        SELECT id FROM users 
+        WHERE role IN ('team_leader', 'branch_manager', 'dsa') AND refer_code IS NULL
+      `);
+      
+      let updatedCount = 0;
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      
+      for (const user of usersResult.rows) {
+        let referCode = '';
+        let isUnique = false;
+        
+        // Generate unique 8 character code
+        while (!isUnique) {
+          referCode = '';
+          for (let i = 0; i < 8; i++) {
+            referCode += chars.charAt(Math.floor(Math.random() * chars.length));
+          }
+          
+          const existingCode = await client.query(
+            'SELECT id FROM users WHERE refer_code = $1',
+            [referCode]
+          );
+          
+          if (existingCode.rows.length === 0) {
+            isUnique = true;
+          }
+        }
+        
+        // Update user with refer code
+        await client.query(
+          'UPDATE users SET refer_code = $1 WHERE id = $2',
+          [referCode, user.id]
+        );
+        
+        updatedCount++;
+      }
+      
+      res.json({ 
+        message: `Generated refer codes for ${updatedCount} users`,
+        updatedCount 
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export default {
   getHierarchyTree,
   getAllUsers,
@@ -455,5 +649,9 @@ export default {
   searchUser,
   getTeamMembers,
   getManagerTeamHierarchy,
-  getUsersByRole
+  getUsersByRole,
+  approveUser,
+  rejectUser,
+  updateExistingUsersStatus,
+  generateReferCodes
 };

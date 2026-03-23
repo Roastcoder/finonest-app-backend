@@ -679,8 +679,18 @@ export const updateLoanStage = async (req, res) => {
     const extraVals = [];
 
     if (stageData.stage === 'LOGIN') {
-      extraCols.push('app_score', 'credit_score');
-      extraVals.push(stageData.appScore || null, stageData.creditScore || null);
+      // Handle alphanumeric app_score and credit_score
+      const appScore = stageData.appScore || stageData.app_score || null;
+      const creditScore = stageData.creditScore || stageData.credit_score || null;
+      
+      extraCols.push('app_score', 'credit_score', 'login_date');
+      extraVals.push(
+        appScore, // Can be alphanumeric like 'A+', 'B1', '750', 'Good', etc.
+        creditScore, // Can be alphanumeric like 'A+', 'B1', '750', 'Excellent', etc.
+        stageData.loginDate || new Date().toISOString()
+      );
+      
+      console.log('LOGIN stage - Scores updated:', { appScore, creditScore });
     } else if (stageData.stage === 'IN_PROCESS') {
       extraCols.push('tags');
       extraVals.push(stageData.tags || []);

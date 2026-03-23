@@ -35,8 +35,61 @@ export const getAllLeads = async (req, res) => {
              l.financier_id, l.assigned_to, l.created_by, l.created_at, l.updated_at,
              l.phone as phone_no, l.vehicle_number as vehicle_no, l.city as district,
              l.current_address, l.pincode,
-             ${optionalSelects}
+             ${optionalSelects},
+             -- Lead conversion status
+             CASE 
+               WHEN ln.id IS NOT NULL THEN 'CONVERTED'
+               ELSE COALESCE(l.stage, 'PENDING')
+             END as lead_status,
+             CASE 
+               WHEN ln.id IS NOT NULL THEN 'Converted to Loan'
+               WHEN l.stage = 'rejected' THEN 'Rejected'
+               WHEN l.stage = 'approved' THEN 'Approved'
+               WHEN l.stage = 'follow_up' THEN 'Follow Up'
+               ELSE 'Pending'
+             END as lead_status_label,
+             CASE 
+               WHEN ln.id IS NOT NULL THEN '#10B981'  -- Green for converted
+               WHEN l.stage = 'rejected' THEN '#EF4444'  -- Red for rejected
+               WHEN l.stage = 'approved' THEN '#059669'  -- Dark green for approved
+               WHEN l.stage = 'follow_up' THEN '#F59E0B'  -- Amber for follow up
+               ELSE '#6B7280'  -- Gray for pending
+             END as lead_status_color,
+             -- Loan application status information (only if converted)
+             ln.id as loan_id,
+             ln.loan_number,
+             CASE 
+               WHEN ln.id IS NULL THEN NULL
+               ELSE COALESCE(ln.application_stage, 'SUBMITTED')
+             END as loan_application_stage,
+             CASE 
+               WHEN ln.id IS NULL THEN NULL
+               WHEN ln.application_stage = 'SUBMITTED' THEN 'Submitted'
+               WHEN ln.application_stage = 'LOGIN' THEN 'Login'
+               WHEN ln.application_stage = 'IN_PROCESS' THEN 'In Process'
+               WHEN ln.application_stage = 'APPROVED' THEN 'Approved'
+               WHEN ln.application_stage = 'REJECTED' THEN 'Rejected'
+               WHEN ln.application_stage = 'DISBURSED' THEN 'Disbursed'
+               WHEN ln.application_stage = 'CANCELLED' THEN 'Cancelled'
+               ELSE 'Submitted'
+             END as loan_application_stage_label,
+             CASE 
+               WHEN ln.id IS NULL THEN NULL
+               WHEN ln.application_stage = 'SUBMITTED' THEN '#6B7280'
+               WHEN ln.application_stage = 'LOGIN' THEN '#3B82F6'
+               WHEN ln.application_stage = 'IN_PROCESS' THEN '#F59E0B'
+               WHEN ln.application_stage = 'APPROVED' THEN '#10B981'
+               WHEN ln.application_stage = 'REJECTED' THEN '#EF4444'
+               WHEN ln.application_stage = 'DISBURSED' THEN '#059669'
+               WHEN ln.application_stage = 'CANCELLED' THEN '#6B7280'
+               ELSE '#6B7280'
+             END as loan_application_stage_color,
+             ln.stage_changed_at as loan_stage_changed_at,
+             ln.created_at as loan_created_at,
+             ln.loan_amount as loan_sanctioned_amount,
+             ln.disbursement_date
       FROM leads l
+      LEFT JOIN loans ln ON l.id = ln.lead_id
       WHERE 1=1
     `;
     
@@ -117,11 +170,67 @@ export const getAllLeads = async (req, res) => {
           assigned_to_name,
           created_by_name,
           financier_name,
-          our_branch: lead.our_branch || 'Head Office'
+          our_branch: lead.our_branch || 'Head Office',
+          
+          // Lead Status (Pending/Converted/Rejected etc.)
+          lead_status: {
+            stage: lead.lead_status,
+            label: lead.lead_status_label,
+            color: lead.lead_status_color
+          },
+          
+          // Loan Application Status (only if converted)
+          has_loan_application: !!lead.loan_id,
+          is_converted_to_loan: !!lead.loan_id,
+          
+          loan_application_status: lead.loan_id ? {
+            stage: lead.loan_application_stage,
+            label: lead.loan_application_stage_label,
+            color: lead.loan_application_stage_color,
+            loan_id: lead.loan_id,
+            loan_number: lead.loan_number,
+            stage_changed_at: lead.loan_stage_changed_at,
+            loan_created_at: lead.loan_created_at,
+            loan_amount: lead.loan_sanctioned_amount,
+            disbursement_date: lead.disbursement_date
+          } : null,
+          
+          // Combined status for easy display
+          display_status: {
+            primary: {
+              label: lead.lead_status_label,
+              color: lead.lead_status_color,
+              type: 'lead'
+            },
+            secondary: lead.loan_id ? {
+              label: `Loan: ${lead.loan_application_stage_label}`,
+              color: lead.loan_application_stage_color,
+              type: 'loan',
+              loan_number: lead.loan_number
+            } : null
+          }
         };
       } catch (err) {
         console.error('Error enriching lead data:', err);
-        return lead;
+        return {
+          ...lead,
+          has_loan_application: false,
+          is_converted_to_loan: false,
+          lead_status: {
+            stage: 'PENDING',
+            label: 'Pending',
+            color: '#6B7280'
+          },
+          loan_application_status: null,
+          display_status: {
+            primary: {
+              label: 'Pending',
+              color: '#6B7280',
+              type: 'lead'
+            },
+            secondary: null
+          }
+        };
       }
     }));
     
@@ -152,7 +261,59 @@ export const getLeadById = async (req, res) => {
              CASE WHEN ln.id IS NOT NULL THEN true ELSE false END as converted_to_loan,
              COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
              l.stage_data,
-             l.stage_history
+             l.stage_history,
+             -- Lead conversion status
+             CASE 
+               WHEN ln.id IS NOT NULL THEN 'CONVERTED'
+               ELSE COALESCE(l.stage, 'PENDING')
+             END as lead_status,
+             CASE 
+               WHEN ln.id IS NOT NULL THEN 'Converted to Loan'
+               WHEN l.stage = 'rejected' THEN 'Rejected'
+               WHEN l.stage = 'approved' THEN 'Approved'
+               WHEN l.stage = 'follow_up' THEN 'Follow Up'
+               ELSE 'Pending'
+             END as lead_status_label,
+             CASE 
+               WHEN ln.id IS NOT NULL THEN '#10B981'
+               WHEN l.stage = 'rejected' THEN '#EF4444'
+               WHEN l.stage = 'approved' THEN '#059669'
+               WHEN l.stage = 'follow_up' THEN '#F59E0B'
+               ELSE '#6B7280'
+             END as lead_status_color,
+             -- Loan application status information
+             ln.id as loan_id,
+             ln.loan_number,
+             COALESCE(ln.application_stage, 'NOT_APPLIED') as loan_application_stage,
+             CASE 
+               WHEN ln.application_stage IS NULL THEN 'Not Applied'
+               WHEN ln.application_stage = 'SUBMITTED' THEN 'Submitted'
+               WHEN ln.application_stage = 'LOGIN' THEN 'Login'
+               WHEN ln.application_stage = 'IN_PROCESS' THEN 'In Process'
+               WHEN ln.application_stage = 'APPROVED' THEN 'Approved'
+               WHEN ln.application_stage = 'REJECTED' THEN 'Rejected'
+               WHEN ln.application_stage = 'DISBURSED' THEN 'Disbursed'
+               WHEN ln.application_stage = 'CANCELLED' THEN 'Cancelled'
+               ELSE 'Not Applied'
+             END as loan_application_stage_label,
+             CASE 
+               WHEN ln.application_stage IS NULL THEN '#9CA3AF'
+               WHEN ln.application_stage = 'SUBMITTED' THEN '#6B7280'
+               WHEN ln.application_stage = 'LOGIN' THEN '#3B82F6'
+               WHEN ln.application_stage = 'IN_PROCESS' THEN '#F59E0B'
+               WHEN ln.application_stage = 'APPROVED' THEN '#10B981'
+               WHEN ln.application_stage = 'REJECTED' THEN '#EF4444'
+               WHEN ln.application_stage = 'DISBURSED' THEN '#059669'
+               WHEN ln.application_stage = 'CANCELLED' THEN '#6B7280'
+               ELSE '#9CA3AF'
+             END as loan_application_stage_color,
+             ln.stage_changed_at as loan_stage_changed_at,
+             ln.created_at as loan_created_at,
+             ln.loan_amount,
+             ln.sanction_amount,
+             ln.disbursement_date,
+             ln.roi,
+             ln.tenure
       FROM leads l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id
@@ -208,8 +369,50 @@ export const getLeadById = async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
     
+    const lead = result.rows[0];
+    
+    // Structure the response with both lead and loan status
+    const responseData = {
+      ...lead,
+      
+      // Lead Status Information
+      lead_status: {
+        stage: lead.lead_status,
+        label: lead.lead_status_label,
+        color: lead.lead_status_color
+      },
+      
+      // Loan Application Status (only if converted)
+      has_loan_application: !!lead.loan_id,
+      is_converted_to_loan: !!lead.loan_id,
+      
+      loan_application_status: lead.loan_id ? {
+        stage: lead.loan_application_stage,
+        label: lead.loan_application_stage_label,
+        color: lead.loan_application_stage_color,
+        loan_id: lead.loan_id,
+        loan_number: lead.loan_number,
+        stage_changed_at: lead.loan_stage_changed_at,
+        loan_created_at: lead.loan_created_at,
+        loan_amount: lead.loan_amount,
+        sanction_amount: lead.sanction_amount,
+        disbursement_date: lead.disbursement_date,
+        roi: lead.roi,
+        tenure: lead.tenure
+      } : null,
+      
+      // Status Timeline for UI
+      status_timeline: {
+        lead_created: lead.created_at,
+        lead_status: lead.lead_status_label,
+        loan_created: lead.loan_created_at,
+        loan_current_stage: lead.loan_id ? lead.loan_application_stage_label : null,
+        last_updated: lead.loan_stage_changed_at || lead.updated_at
+      }
+    };
+    
     console.log('Returning lead data for ID:', req.params.id);
-    res.json(result.rows[0]);
+    res.json(responseData);
   } catch (error) {
     console.error('Get lead by ID error:', error.message);
     console.error('Error stack:', error.stack);

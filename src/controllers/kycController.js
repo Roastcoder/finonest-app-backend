@@ -1,17 +1,12 @@
 import axios from 'axios';
 import { verifyPanComprehensive } from '../integrations/surepassApi.js';
 
-const KYC_BASE_URL = process.env.KYC_BASE_URL;
-const KYC_CLIENT_USER_ID = process.env.KYC_CLIENT_USER_ID;
-const KYC_SECRET_KEY = process.env.KYC_SECRET_KEY;
-const KYC_ACCESS_KEY = process.env.KYC_ACCESS_KEY;
-const KYC_AADHAAR_OTP_SERVICE_ID = process.env.KYC_AADHAAR_OTP_SERVICE_ID;
-const KYC_AADHAAR_KYC_SERVICE_ID = process.env.KYC_AADHAAR_KYC_SERVICE_ID;
-
-// Helper function to check if KYC is configured
-const isKycConfigured = () => {
-  return KYC_BASE_URL && KYC_CLIENT_USER_ID && KYC_SECRET_KEY && KYC_ACCESS_KEY;
-};
+const KYC_BASE_URL = process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech';
+const KYC_CLIENT_USER_ID = process.env.KYC_CLIENT_USER_ID || '8099a31a-608b-4200-8da7-05da0d5ef963';
+const KYC_SECRET_KEY = process.env.KYC_SECRET_KEY || '42d76782-84ba-4e4f-9721-76375f4dce4b';
+const KYC_ACCESS_KEY = process.env.KYC_ACCESS_KEY || '7a41dfcf-b4f9-41a0-8af4-fc5929483f8f';
+const KYC_AADHAAR_OTP_SERVICE_ID = process.env.KYC_AADHAAR_OTP_SERVICE_ID || 'c6b4e6c9-ecfb-4bd2-8e22-652b33e60223';
+const KYC_AADHAAR_KYC_SERVICE_ID = process.env.KYC_AADHAAR_KYC_SERVICE_ID || 'db29f416-69be-4830-a14b-194533f6e312';
 
 export const verifyPan = async (req, res) => {
   try {
@@ -93,18 +88,6 @@ export const sendAadhaarOtp = async (req, res) => {
     }
 
     console.log('Sending Aadhaar OTP for:', aadhaar_number);
-
-    // Check if Neokred KYC is configured
-    if (!isKycConfigured()) {
-      console.log('KYC API not configured, using mock data');
-      // Return mock data when KYC is not configured (works for both dev and prod)
-      return res.json({
-        success: true,
-        client_id: 'mock_client_id_' + Date.now(),
-        session_id: 'mock_session_id_' + Date.now(),
-        message: 'Mock OTP sent successfully (KYC service not configured)'
-      });
-    }
 
     // Neokred API call for Aadhaar OTP using correct v2 endpoint
     const requestData = {
@@ -200,21 +183,6 @@ export const verifyAadhaarOtp = async (req, res) => {
     }
 
     console.log('Verifying Aadhaar OTP for session_id:', sessionIdToUse);
-
-    // Check if KYC is configured, if not return mock data
-    if (!isKycConfigured()) {
-      console.log('KYC API not configured, using mock data for OTP verification');
-      return res.json({
-        success: true,
-        data: {
-          full_name: 'MOCK AADHAAR USER',
-          aadhaar_number: '************',
-          address: 'Mock Address, Mock City, Mock State',
-          email: 'mock@example.com',
-          message: 'Mock OTP verification successful (KYC service not configured)'
-        }
-      });
-    }
 
     // Neokred API call for Aadhaar OTP verification using correct v2 endpoint
     const requestData = {

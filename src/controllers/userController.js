@@ -184,15 +184,14 @@ export const createUser = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Generate unique user ID
+    // Generate unique user ID with FN prefix
     const seqResult = await client.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '\\\\d+$') AS INTEGER)), 0) + 1 as next_seq
-       FROM users`
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM 'FN(\\d+)') AS INTEGER)), 0) + 1 as next_seq
+       FROM users WHERE user_id LIKE 'FN%'`
     );
 
-    const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
-    const initials = (full_name || 'XX').substring(0, 2).toUpperCase();
-    const userId = `${initials}-${sequence}`;
+    const sequence = String(seqResult.rows[0].next_seq).padStart(5, '0');
+    const userId = `FN${sequence}`;
 
     const userData = {
       user_id: userId,

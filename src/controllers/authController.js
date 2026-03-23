@@ -164,23 +164,13 @@ export const signup = async (req, res) => {
       approvalMessage = 'DSA account created successfully! Please wait for admin approval to login.';
     }
     
-    // Generate unique user ID based on role
-    let userIdPrefix = 'EX'; // Executive
-    if (role === 'admin') userIdPrefix = 'ADMIN';
-    else if (role === 'branch_manager') userIdPrefix = 'MGR';
-    else if (role === 'dsa') userIdPrefix = 'DSA';
-    else if (role === 'sales_manager') userIdPrefix = 'SM';
-    else if (role === 'accountant') userIdPrefix = 'ACC';
-    else if (role === 'team_leader') userIdPrefix = 'TL';
-    
-    // Get next sequence number for this role
+    // Generate unique user ID in format FN00001
     const seqResult = await db.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM '${userIdPrefix}-(\\d+)') AS INTEGER)), 0) + 1 as next_seq
-       FROM users WHERE user_id LIKE '${userIdPrefix}-%'`
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM 'FN(\\d+)') AS INTEGER)), 0) + 1 as next_seq
+       FROM users WHERE user_id LIKE 'FN%'`
     );
-    
-    const sequence = String(seqResult.rows[0].next_seq).padStart(4, '0');
-    const userId = `${userIdPrefix}-${sequence}`;
+    const sequence = String(seqResult.rows[0].next_seq).padStart(5, '0');
+    const userId = `FN${sequence}`;
     
     // Insert user with complete KYC data
     const result = await db.query(
@@ -326,6 +316,19 @@ export const checkAadhaar = async (req, res) => {
       success: false,
       error: 'Failed to check Aadhaar availability' 
     });
+  }
+};
+
+export const updatePhone = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || phone.length !== 10) {
+      return res.status(400).json({ error: 'Invalid phone number' });
+    }
+    await db.query('UPDATE users SET phone = $1 WHERE id = $2', [phone, req.user.id]);
+    res.json({ success: true, message: 'Phone updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };
 

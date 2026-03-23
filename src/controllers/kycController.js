@@ -209,24 +209,23 @@ export const verifyAadhaarOtp = async (req, res) => {
 
     console.log('Verifying Aadhaar OTP for session_id:', sessionIdToUse);
 
+    // For development: return mock data immediately
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Using mock Aadhaar OTP verification for development');
+      return res.json({
+        success: true,
+        data: {
+          full_name: 'MOCK AADHAAR USER',
+          aadhaar_number: '************',
+          address: 'Mock Address, Mock City, Mock State',
+          email: 'mock@example.com',
+          message: 'Mock OTP verification successful (development mode)'
+        }
+      });
+    }
+
     if (!isKycConfigured()) {
       console.error('KYC API not configured properly');
-      
-      // For development: return mock data
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Using mock Aadhaar OTP verification for development');
-        return res.json({
-          success: true,
-          data: {
-            full_name: 'MOCK AADHAAR USER',
-            aadhaar_number: '************',
-            address: 'Mock Address, Mock City, Mock State',
-            email: 'mock@example.com',
-            message: 'Mock OTP verification successful (development mode)'
-          }
-        });
-      }
-      
       return res.status(500).json({
         success: false,
         error: 'KYC service not configured. Please contact administrator.'

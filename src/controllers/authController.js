@@ -255,6 +255,80 @@ export const signup = async (req, res) => {
   }
 };
 
+export const checkPan = async (req, res) => {
+  try {
+    const { pan_number } = req.body;
+    
+    if (!pan_number || pan_number.length !== 10) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid PAN number format' 
+      });
+    }
+    
+    // Check if PAN number already exists
+    const existingPan = await db.query('SELECT id, name, full_name FROM users WHERE pan_number = $1', [pan_number]);
+    if (existingPan.rows.length > 0) {
+      const existingUserName = existingPan.rows[0].name || existingPan.rows[0].full_name;
+      return res.status(400).json({ 
+        success: false,
+        error: `This PAN number is already registered with ${existingUserName}. Please use a different PAN number or contact support.`,
+        errorType: 'PAN_EXISTS'
+      });
+    }
+    
+    // PAN is available
+    res.json({
+      success: true,
+      message: 'PAN number is available for registration'
+    });
+    
+  } catch (error) {
+    console.error('Check PAN error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to check PAN availability' 
+    });
+  }
+};
+
+export const checkAadhaar = async (req, res) => {
+  try {
+    const { aadhaar_number } = req.body;
+    
+    if (!aadhaar_number || aadhaar_number.length !== 12) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid Aadhaar number format' 
+      });
+    }
+    
+    // Check if Aadhaar number already exists
+    const existingAadhaar = await db.query('SELECT id, name, full_name FROM users WHERE aadhaar_number = $1', [aadhaar_number]);
+    if (existingAadhaar.rows.length > 0) {
+      const existingUserName = existingAadhaar.rows[0].name || existingAadhaar.rows[0].full_name;
+      return res.status(400).json({ 
+        success: false,
+        error: `This Aadhaar number is already registered with ${existingUserName}. Please use a different Aadhaar number or contact support.`,
+        errorType: 'AADHAAR_EXISTS'
+      });
+    }
+    
+    // Aadhaar is available
+    res.json({
+      success: true,
+      message: 'Aadhaar number is available for registration'
+    });
+    
+  } catch (error) {
+    console.error('Check Aadhaar error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to check Aadhaar availability' 
+    });
+  }
+};
+
 export const getProfile = async (req, res) => {
   try {
     const result = await db.query(`

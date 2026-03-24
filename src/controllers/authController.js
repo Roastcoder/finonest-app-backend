@@ -23,8 +23,8 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if user is approved (for executive and DSA roles)
-    if (['executive', 'dsa'].includes(user.role) && user.status !== 'active') {
+    // Check if user account is pending approval
+    if (user.status === 'pending') {
       return res.status(403).json({ 
         error: 'Your account is pending approval. Please contact admin.',
         status: user.status 

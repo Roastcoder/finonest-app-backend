@@ -9,15 +9,21 @@ const { Pool } = pg;
 const isProduction = process.env.NODE_ENV === 'production';
 const connectionString = process.env.DATABASE_URL;
 
+// Use SSL only if explicitly requested or if in production AND not explicitly disabled
+const useSSL = process.env.DB_SSL === 'true' || (isProduction && process.env.DB_SSL !== 'false');
+
 const poolConfig = connectionString 
-  ? { connectionString, ssl: isProduction ? { rejectUnauthorized: false } : false }
+  ? { 
+      connectionString, 
+      ssl: useSSL ? { rejectUnauthorized: false } : false 
+    }
   : {
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT) || 5432,
       database: process.env.DB_NAME || 'car_credit_hub',
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASSWORD || 'your_password',
-      ssl: isProduction ? { rejectUnauthorized: false } : false,
+      ssl: useSSL ? { rejectUnauthorized: false } : false,
     };
 
 const pool = new Pool({

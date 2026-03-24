@@ -30,6 +30,8 @@ import fieldPermissionRoutes from './routes/fieldPermissions.js';
 import applicationStageRoutes from './routes/applicationStages.js';
 import whatsappRoutes from './routes/whatsapp.js';
 import kycRoutes from './routes/kyc.js';
+import templateRoutes from './routes/templates.js';
+import chatbotRoutes from './routes/chatbot.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -79,6 +81,8 @@ app.use('/api/integrations', integrationRoutes);
 app.use('/api/timeline', timelineRoutes);
 app.use('/api/application-stages', applicationStageRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
+app.use('/api/templates', templateRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 
 app.get('/', (req, res) => {
   res.json({

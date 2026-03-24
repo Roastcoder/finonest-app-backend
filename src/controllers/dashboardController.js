@@ -2,84 +2,119 @@ import db from '../config/database.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const dateFilter = startDate && endDate ? 'AND created_at BETWEEN $1 AND $2' : '';
-    const params = startDate && endDate ? [startDate, endDate] : [];
-    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+    const { timeline, startDate, endDate } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+    let trackerDateFilter = '';
+    let trackerParams = [];
 
-    // Bank wise login
+    // Helper for timeline logic
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
+    const yesterdayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    if (timeline === 'today') {
+      dateFilter = 'AND l.created_at >= $1';
+      params = [todayStart];
+    } else if (timeline === 'yesterday') {
+      dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
+      params = [yesterdayStart, yesterdayEnd];
+    } else if (timeline === 'this_month') {
+      dateFilter = 'AND l.created_at >= $1';
+      params = [monthStart];
+    } else if (startDate && endDate) {
+      dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
+      params = [startDate, endDate];
+    }
+
+    // For the Top KPI cards (Monthly Tracker baseline)
+    if (dateFilter) {
+      trackerDateFilter = dateFilter;
+      trackerParams = [...params];
+    } else {
+      trackerDateFilter = 'AND created_at >= $1';
+      trackerParams = [monthStart];
+    }
+
+    // 1. Bank wise login
     const loginStats = await db.query(`
-      SELECT b.name as "bankName", COUNT(l.id) as count
+      SELECT COALESCE(b.name, 'Unassigned') as "bankName", COUNT(l.id) as count
       FROM leads l
-      JOIN banks b ON l.financier_id = b.id
+      LEFT JOIN banks b ON l.financier_id = b.id
       WHERE l.stage IN ('login', 'approved', 'abnd', 'disbursed') ${dateFilter}
-      GROUP BY b.id, b.name
-      ORDER BY count DESC
+      GROUP BY 1
+      ORDER BY 2 DESC
     `, params);
 
-    // Bank wise ABND
-    const abndBankWise = await db.query(`
-      SELECT b.name as "bankName", SUM(l.loan_amount_required) as amount
-      FROM leads l
-      JOIN banks b ON l.financier_id = b.id
-      WHERE l.stage = 'abnd' ${dateFilter}
-      GROUP BY b.id, b.name 
-      ORDER BY amount DESC
-    `, params);
-
-    // Bank wise Disbursements
+    // 2. Bank wise Disbursements
     const disbursementBankWise = await db.query(`
-      SELECT b.name as "bankName", SUM(l.loan_amount_required) as amount
+      SELECT COALESCE(b.name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount_required, 0)) as amount, COUNT(l.id) as units
       FROM leads l
-      JOIN banks b ON l.financier_id = b.id
+      LEFT JOIN banks b ON l.financier_id = b.id
       WHERE l.stage = 'disbursed' ${dateFilter}
-      GROUP BY b.id, b.name 
-      ORDER BY amount DESC
+      GROUP BY 1
+      ORDER BY 2 DESC
     `, params);
 
-    // Enhanced PDD Tracker mapping
+    // 3. PDD Tracker
     const pddTrackerRows = await db.query(`
       SELECT 
         CASE 
-          WHEN EXTRACT(DAY FROM NOW() - created_at) BETWEEN 0 AND 30 THEN '0-30'
-          WHEN EXTRACT(DAY FROM NOW() - created_at) BETWEEN 31 AND 45 THEN '31-45'
-          WHEN EXTRACT(DAY FROM NOW() - created_at) BETWEEN 46 AND 60 THEN '46-60'
-          WHEN EXTRACT(DAY FROM NOW() - created_at) BETWEEN 61 AND 90 THEN '61-90'
+          WHEN created_at >= NOW() - INTERVAL '30 days' THEN '0-30'
+          WHEN created_at >= NOW() - INTERVAL '45 days' THEN '31-45'
+          WHEN created_at >= NOW() - INTERVAL '60 days' THEN '46-60'
+          WHEN created_at >= NOW() - INTERVAL '90 days' THEN '61-90'
           ELSE '90+'
         END as bucket,
         COUNT(*) as count
-      FROM leads WHERE stage = 'abnd' GROUP BY bucket
-    `);
+      FROM leads l
+      WHERE stage = 'abnd' ${dateFilter} 
+      GROUP BY 1
+    `, params);
 
-    // Shape PDD output object identically to frontend mappings
     const pddTracker = {};
-    pddTrackerRows.rows.forEach(r => pddTracker[r.bucket] = r.count);
+    pddTrackerRows.rows.forEach(r => pddTracker[r.bucket] = parseInt(r.count || 0));
 
-    // Monthly App Tracker metrics (Using 'this month' as baseline)
+    // 4. Monthly Tracker (KPIs)
     const monthlyTrackerQuery = await db.query(`
       SELECT 
-        SUM(CASE WHEN stage IN ('login', 'approved', 'abnd', 'disbursed') THEN 1 ELSE 0 END) as login_units,
-        SUM(CASE WHEN stage IN ('login', 'in_process') THEN 1 ELSE 0 END) as inprocess_units,
-        SUM(CASE WHEN stage IN ('approved', 'abnd', 'disbursed') THEN 1 ELSE 0 END) as approved_units,
+        COUNT(CASE WHEN stage IN ('login', 'approved', 'abnd', 'disbursed') THEN 1 END) as login_units,
+        COUNT(CASE WHEN stage IN ('login', 'in_process') THEN 1 END) as inprocess_units,
+        COUNT(CASE WHEN stage IN ('approved', 'abnd', 'disbursed') THEN 1 END) as approved_units,
         SUM(CASE WHEN stage IN ('approved', 'abnd', 'disbursed') THEN COALESCE(loan_amount_required, 0) ELSE 0 END) as approved_amount,
-        SUM(CASE WHEN stage = 'disbursed' THEN 1 ELSE 0 END) as disbursed_units,
+        COUNT(CASE WHEN stage = 'disbursed' THEN 1 END) as disbursed_units,
         SUM(CASE WHEN stage = 'disbursed' THEN COALESCE(loan_amount_required, 0) ELSE 0 END) as disbursed_amount
-      FROM leads
-      WHERE created_at >= $1
-    `, [monthStart]);
+      FROM leads l
+      WHERE 1=1 ${trackerDateFilter}
+    `, trackerParams);
 
-    const m = monthlyTrackerQuery.rows[0];
+    const m = monthlyTrackerQuery.rows[0] || {};
 
-    // In Process Tags lookup (Requires tags table integration, fallback logic for demonstration given schema constraint)
+    // 5. Stage Breakdown (Funnel)
+    const stageBreakdown = await db.query(`
+      SELECT stage, COUNT(*) as count 
+      FROM leads l
+      WHERE 1=1 ${dateFilter}
+      GROUP BY 1
+      ORDER BY 2 DESC
+    `, params);
+
+    // 6. In Process Tags
     const inProcessTags = await db.query(`
-      SELECT 'Pending Follow-up' as tag, COUNT(id) as count FROM leads WHERE stage IN ('login', 'lead') GROUP BY 1
-    `);
+      SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
+      FROM leads l 
+      WHERE stage IN ('login', 'lead') ${dateFilter} 
+      GROUP BY 1
+    `, params);
 
     res.json({
       loginBankWise: loginStats.rows,
-      abndBankWise: abndBankWise.rows,
       disbursementBankWise: disbursementBankWise.rows,
       pddTracker: pddTracker,
+      stageBreakdown: stageBreakdown.rows,
       monthlyTracker: {
         login: parseInt(m.login_units || 0),
         inProcess: parseInt(m.inprocess_units || 0),
@@ -89,7 +124,7 @@ export const getDashboardStats = async (req, res) => {
       inProcessTags: inProcessTags.rows
     });
   } catch (error) {
-    console.error('Dashboard stats error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('CRITICAL: Dashboard stats error:', error);
+    res.status(500).json({ error: error.message, stack: error.stack });
   }
 };

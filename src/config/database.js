@@ -5,14 +5,23 @@ dotenv.config();
 
 const { Pool } = pg;
 
-// Use individual connection parameters from .env file
+// Use connection string if provided (helps with remote DBs), otherwise use individual parameters
+const isProduction = process.env.NODE_ENV === 'production';
+const connectionString = process.env.DATABASE_URL;
+
+const poolConfig = connectionString 
+  ? { connectionString, ssl: isProduction ? { rejectUnauthorized: false } : false }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT) || 5432,
+      database: process.env.DB_NAME || 'car_credit_hub',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'your_password',
+      ssl: isProduction ? { rejectUnauthorized: false } : false,
+    };
+
 const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME || 'car_credit_hub',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'your_password',
-  ssl: false,
+  ...poolConfig,
   // Connection pool settings
   max: 20,
   idleTimeoutMillis: 30000,

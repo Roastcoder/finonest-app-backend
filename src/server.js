@@ -123,30 +123,77 @@ app.listen(PORT, async () => {
     console.error('❌ bank_branches table init failed:', err.message);
   }
 
-  // Add branch/SM/AM columns to loans table if not exists
+  // Comprehensive column migrations
   const newCols = [
+    // loans
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_branch_name VARCHAR(255)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_executive_name VARCHAR(255)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_executive_mobile VARCHAR(20)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_name VARCHAR(255)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_mobile VARCHAR(20)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS applicant_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS mobile VARCHAR(20)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS co_applicant_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS guarantor_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS case_type VARCHAR(50)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS sourcing_person_name VARCHAR(255)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS vertical VARCHAR(100)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS scheme VARCHAR(100)',
+    'ALTER TABLE loans ADD COLUMN IF NOT EXISTS emi DECIMAL(15,2)',
+    // users - KYC & profile
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(20)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS refer_code VARCHAR(50)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS pan_data TEXT',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS aadhaar_data TEXT',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS pan_verified BOOLEAN DEFAULT FALSE',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS aadhaar_verified BOOLEAN DEFAULT FALSE',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_completed BOOLEAN DEFAULT FALSE',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth DATE',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(20)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS father_name VARCHAR(255)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS address_line1 TEXT',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS address_line2 TEXT',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS city VARCHAR(100)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS state VARCHAR(100)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS country VARCHAR(100)',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(500)',
+    // banks
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS logo_url VARCHAR(500)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS location VARCHAR(255)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS geo_limit VARCHAR(50)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS sales_manager_name VARCHAR(255)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS sales_manager_mobile VARCHAR(20)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS area_sales_manager_name VARCHAR(255)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS area_sales_manager_mobile VARCHAR(20)',
+    'ALTER TABLE banks ADD COLUMN IF NOT EXISTS product VARCHAR(255)',
+    // branches
+    'ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE',
+    'ALTER TABLE branches ADD COLUMN IF NOT EXISTS pincode VARCHAR(10)',
   ];
   for (const sql of newCols) {
     try {
       await db.query(sql);
     } catch (err) {
-      console.error('❌ Column migration failed:', err.message);
+      if (!err.message.includes('already exists')) {
+        console.error('❌ Migration failed:', err.message);
+      }
     }
   }
-  console.log('✅ loans branch/SM/AM columns + users photo_path ready');
+  console.log('✅ All column migrations applied');
 
   // Ensure profile-photos upload dir exists
   const { default: fs } = await import('fs');
   const { default: path } = await import('path');
   const photoDir = path.join(process.cwd(), 'uploads', 'profile-photos');
   if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
-  console.log('✅ profile-photos directory ready');
+  const bankLogoDir = path.join(process.cwd(), 'uploads', 'bank-logos');
+  if (!fs.existsSync(bankLogoDir)) fs.mkdirSync(bankLogoDir, { recursive: true });
+  console.log('✅ profile-photos & bank-logos directories ready');
   
   // Initialize application stage jobs
   try {

@@ -130,6 +130,7 @@ app.listen(PORT, async () => {
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_executive_mobile VARCHAR(20)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_name VARCHAR(255)',
     'ALTER TABLE loans ADD COLUMN IF NOT EXISTS financier_area_manager_mobile VARCHAR(20)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_path VARCHAR(500)',
   ];
   for (const sql of newCols) {
     try {
@@ -138,7 +139,14 @@ app.listen(PORT, async () => {
       console.error('❌ Column migration failed:', err.message);
     }
   }
-  console.log('✅ loans branch/SM/AM columns ready');
+  console.log('✅ loans branch/SM/AM columns + users photo_path ready');
+
+  // Ensure profile-photos upload dir exists
+  const { default: fs } = await import('fs');
+  const { default: path } = await import('path');
+  const photoDir = path.join(process.cwd(), 'uploads', 'profile-photos');
+  if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
+  console.log('✅ profile-photos directory ready');
   
   // Initialize application stage jobs
   try {

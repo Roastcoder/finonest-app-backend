@@ -1,6 +1,124 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from '../config/database.js';
+import https from 'https';
+import http from 'http';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+
+// Multer for profile photo uploads
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = path.join(process.cwd(), 'uploads', 'profile-photos');
+    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `photo-${Date.now()}${path.extname(file.originalname)}`);
+  }
+});
+const photoUpload = multer({
+  storage: photoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    /jpeg|jpg|png/.test(file.mimetype) ? cb(null, true) : cb(new Error('Only JPG/PNG allowed'));
+  }
+});
+export const photoUploadMiddleware = photoUpload.single('photo');
+
+// In-memory OTP store: { phone: { otp, expiresAt } }
+const mobileOtpStore = new Map();
+
+const sendSarvSms = (phone, otp) => {
+  return new Promise((resolve, reject) => {
+    const template = `Hi! ${otp} is your OTP to log in to Finonest Pro. The code is valid for just 3 mins. -Team Finonest`;
+    const params = new URLSearchParams({
+      token: '1507603797696c62b571b953.18331010',
+      user_id: '50962153',
+      route: 'OT',
+      template_id: '16212',
+      sender_id: 'FINOST',
+      language: 'EN',
+      template: template,
+      contact_numbers: phone
+    });
+    const url = `https://m1.sarv.com/api/v2.0/sms_campaign.php?${params.toString()}`;
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+    }).on('error', reject);
+  });
+};
+
+export const updateProfilePhoto = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No photo uploaded' });
+    const relativePath = `uploads/profile-photos/${req.file.filename}`;
+    // Delete old photo if exists
+    const old = await db.query('SELECT photo_path FROM users WHERE id = $1', [req.user.id]);
+    if (old.rows[0]?.photo_path) {
+      const oldFile = path.join(process.cwd(), old.rows[0].photo_path);
+      if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
+    }
+    await db.query('UPDATE users SET photo_path = $1 WHERE id = $2', [relativePath, req.user.id]);
+    res.json({ success: true, photo_path: relativePath });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const uploadPhoto = async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No photo uploaded' });
+    const relativePath = `uploads/profile-photos/${req.file.filename}`;
+    res.json({ success: true, photo_path: relativePath });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+export const sendMobileOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Invalid mobile number' });
+    }
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    mobileOtpStore.set(phone, { otp, expiresAt: Date.now() + 3 * 60 * 1000 });
+    await sendSarvSms(phone, otp);
+    res.json({ success: true, message: 'OTP sent successfully' });
+  } catch (error) {
+    console.error('Send mobile OTP error:', error);
+    res.status(500).json({ success: false, error: 'Failed to send OTP' });
+  }
+};
+
+export const verifyMobileOtp = async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, error: 'Phone and OTP are required' });
+    }
+    const record = mobileOtpStore.get(phone);
+    if (!record) {
+      return res.status(400).json({ success: false, error: 'OTP not found. Please request a new OTP.' });
+    }
+    if (Date.now() > record.expiresAt) {
+      mobileOtpStore.delete(phone);
+      return res.status(400).json({ success: false, error: 'OTP has expired. Please request a new OTP.' });
+    }
+    if (record.otp !== otp) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP. Please try again.' });
+    }
+    mobileOtpStore.delete(phone);
+    res.json({ success: true, message: 'Mobile number verified successfully' });
+  } catch (error) {
+    console.error('Verify mobile OTP error:', error);
+    res.status(500).json({ success: false, error: 'Failed to verify OTP' });
+  }
+};
 
 export const login = async (req, res) => {
   try {
@@ -84,7 +202,8 @@ export const signup = async (req, res) => {
       pan_number,
       aadhaar_number,
       pan_data,
-      aadhaar_data
+      aadhaar_data,
+      photo_path
     } = req.body;
     
     // Validate required fields
@@ -178,25 +297,15 @@ export const signup = async (req, res) => {
         user_id, name, full_name, email, password, phone, role, status, reporting_to, 
         pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
         date_of_birth, gender, father_name, address_line1, address_line2, city, state, pincode, country,
-        kyc_completed, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) 
+        kyc_completed, photo_path, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) 
        RETURNING id, user_id, name, full_name, email, role, status, pan_verified, aadhaar_verified, kyc_completed`,
       [
-        userId,
-        name,
-        name,
-        email, 
-        hashedPassword, 
-        phone || null, 
-        role, 
-        finalStatus,
-        reportingTo,
-        pan_number || null,
-        aadhaar_number || null,
+        userId, name, name, email, hashedPassword, phone || null, role, finalStatus, reportingTo,
+        pan_number || null, aadhaar_number || null,
         pan_data ? JSON.stringify(pan_data) : null,
         aadhaar_data ? JSON.stringify(aadhaar_data) : null,
-        !!pan_data, // pan_verified
-        !!aadhaar_data, // aadhaar_verified
+        !!pan_data, !!aadhaar_data,
         pan_data?.dob || aadhaar_data?.date_of_birth || null,
         pan_data?.gender || aadhaar_data?.gender || null,
         aadhaar_data?.father_name || null,
@@ -206,9 +315,9 @@ export const signup = async (req, res) => {
         pan_data?.address?.state || aadhaar_data?.address?.split(',')[2] || null,
         pan_data?.address?.zip || null,
         pan_data?.address?.country || 'INDIA',
-        !!(pan_data && aadhaar_data), // kyc_completed
-        new Date(),
-        new Date()
+        !!(pan_data && aadhaar_data),
+        photo_path || null,
+        new Date(), new Date()
       ]
     );
     
@@ -342,7 +451,7 @@ export const getProfile = async (req, res) => {
         u.pan_verified, u.aadhaar_verified, u.kyc_completed,
         u.date_of_birth, u.gender, u.father_name, 
         u.address_line1, u.address_line2, u.city, u.state, u.pincode, u.country,
-        u.created_at, u.updated_at,
+        u.photo_path, u.created_at, u.updated_at,
         b.name as branch_name,
         m.name as manager_name, m.full_name as manager_full_name, m.role as manager_role
       FROM users u
@@ -418,7 +527,8 @@ export const getProfile = async (req, res) => {
         // Raw KYC Data
         pan_details: panData,
         aadhaar_details: aadhaarData
-      }
+      },
+      photo_path: user.photo_path || null
     });
   } catch (error) {
     console.error('Get profile error:', error);

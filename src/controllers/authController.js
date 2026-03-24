@@ -199,7 +199,6 @@ export const signup = async (req, res) => {
   try {
     const { 
       name, 
-      email, 
       password, 
       phone, 
       role = 'executive',
@@ -302,8 +301,8 @@ export const signup = async (req, res) => {
         user_id, name, full_name, password, phone, role, status, reporting_to, 
         pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
         date_of_birth, gender, father_name, address_line1, address_line2, city, state, pincode, country,
-        kyc_completed, photo_path, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) 
+        kyc_completed, photo_path
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) 
        RETURNING id, user_id, name, full_name, phone, role, status, pan_verified, aadhaar_verified, kyc_completed`,
       [
         userId, name, name, hashedPassword, phone || null, role, finalStatus, reportingTo,
@@ -321,8 +320,7 @@ export const signup = async (req, res) => {
         pan_data?.address?.zip || null,
         pan_data?.address?.country || 'INDIA',
         !!(pan_data && aadhaar_data),
-        photo_path || null,
-        new Date(), new Date()
+        photo_path || null
       ]
     );
     
@@ -450,7 +448,7 @@ export const getProfile = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT 
-        u.id, u.user_id, u.name, u.full_name, u.email, u.role, u.phone, u.status, 
+        u.id, u.user_id, u.name, u.full_name, u.role, u.phone, u.status, 
         u.reporting_to, u.branch_id, u.refer_code, u.joining_date,
         u.pan_number, u.aadhaar_number, u.pan_data, u.aadhaar_data, 
         u.pan_verified, u.aadhaar_verified, u.kyc_completed,

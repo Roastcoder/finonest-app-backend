@@ -122,13 +122,18 @@ export const verifyMobileOtp = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { phone, password } = req.body;
+    
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'Phone and password are required' });
+    }
+    
     const result = await db.query(`
       SELECT u.*, m.name as manager_name, m.full_name as manager_full_name, m.role as manager_role
       FROM users u
       LEFT JOIN users m ON u.reporting_to = m.id
-      WHERE u.email = $1
-    `, [email]);
+      WHERE u.phone = $1
+    `, [phone]);
     
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -144,7 +149,7 @@ export const login = async (req, res) => {
     // Check if user account is pending approval
     if (user.status === 'pending') {
       return res.status(403).json({ 
-        error: 'Account Pending For Verification. Retry Login After 5 Mins.',
+        error: 'Invalid phone number or MPIN. Please try again.',
         status: user.status 
       });
     }
@@ -165,7 +170,7 @@ export const login = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, phone: user.phone, role: user.role },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '7d' }
     );
@@ -175,7 +180,7 @@ export const login = async (req, res) => {
       user: { 
         id: user.id, 
         name: user.name || user.full_name, 
-        email: user.email, 
+        phone: user.phone, 
         role: user.role,
         manager_name: user.manager_name || user.manager_full_name,
         manager_role: user.manager_role,
@@ -207,16 +212,16 @@ export const signup = async (req, res) => {
     } = req.body;
     
     // Validate required fields
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
+    if (!name || !phone || !password) {
+      return res.status(400).json({ error: 'Name, phone, and password are required' });
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Check if email already exists
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    // Check if phone already exists
+    const existingUser = await db.query('SELECT id FROM users WHERE phone = $1', [phone]);
     if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
     
     // Check if PAN number already exists (if provided)
@@ -294,14 +299,14 @@ export const signup = async (req, res) => {
     // Insert user with complete KYC data
     const result = await db.query(
       `INSERT INTO users (
-        user_id, name, full_name, email, password, phone, role, status, reporting_to, 
+        user_id, name, full_name, password, phone, role, status, reporting_to, 
         pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
         date_of_birth, gender, father_name, address_line1, address_line2, city, state, pincode, country,
         kyc_completed, photo_path, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) 
-       RETURNING id, user_id, name, full_name, email, role, status, pan_verified, aadhaar_verified, kyc_completed`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) 
+       RETURNING id, user_id, name, full_name, phone, role, status, pan_verified, aadhaar_verified, kyc_completed`,
       [
-        userId, name, name, email, hashedPassword, phone || null, role, finalStatus, reportingTo,
+        userId, name, name, hashedPassword, phone || null, role, finalStatus, reportingTo,
         pan_number || null, aadhaar_number || null,
         pan_data ? JSON.stringify(pan_data) : null,
         aadhaar_data ? JSON.stringify(aadhaar_data) : null,
@@ -330,7 +335,7 @@ export const signup = async (req, res) => {
         id: user.id,
         user_id: user.user_id,
         name: user.name || user.full_name,
-        email: user.email,
+        phone: user.phone,
         role: user.role,
         status: user.status
       },
@@ -343,7 +348,7 @@ export const signup = async (req, res) => {
     console.error('Signup error:', error);
     
     if (error.code === '23505') {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
     
     if (error.code === '42P01') {
@@ -487,7 +492,7 @@ export const getProfile = async (req, res) => {
       user_id: user.user_id,
       name: user.name || user.full_name,
       full_name: user.full_name,
-      email: user.email,
+      phone: user.phone,
       role: user.role,
       phone: user.phone,
       status: user.status,

@@ -5,7 +5,7 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 export const getHierarchyTree = async (req, res) => {
   try {
     let query = `
-      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.branch_id, u.dsa_id, u.status, u.refer_code,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.reporting_to, u.branch_id, u.dsa_id, u.status, u.refer_code,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -39,7 +39,7 @@ export const getHierarchyTree = async (req, res) => {
 export const getAllUsers = async (req, res) => {
   try {
     let query = `
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name,
              m.full_name as manager_name,
              d.full_name as dsa_name
@@ -113,12 +113,12 @@ export const createUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { password, role, full_name, email, phone, branch_id, reporting_to, dsa_id } = req.body;
+    const { password, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
 
     // Validation
-    if (!password || !role || !full_name || !email) {
+    if (!password || !role || !full_name || !phone) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Password, role, full name, and email are required' });
+      return res.status(400).json({ error: 'Password, role, full name, and phone are required' });
     }
 
     // Role-based permissions
@@ -179,11 +179,11 @@ export const createUser = async (req, res) => {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
 
-    // Check if email already exists
-    const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [email]);
+    // Check if phone already exists
+    const existingUser = await client.query('SELECT id FROM users WHERE phone = $1', [phone]);
     if (existingUser.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -201,9 +201,8 @@ export const createUser = async (req, res) => {
       user_id: userId,
       name: full_name,
       full_name: full_name,
-      email,
+      phone,
       password: hashedPassword,
-      phone: phone || null,
       role,
       branch_id: branch_id || null,
       reporting_to: reporting_to || null,
@@ -271,7 +270,7 @@ export const createUser = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('Create user error:', error);
     if (error.code === '23505') {
-      return res.status(400).json({ error: 'Email or user ID already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
     res.status(500).json({ error: error.message });
   } finally {
@@ -346,7 +345,7 @@ export const updateUser = async (req, res) => {
     await client.query('ROLLBACK');
     console.error('Update user error:', error);
     if (error.code === '23505') {
-      return res.status(400).json({ error: 'Email already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
     res.status(500).json({ error: error.message });
   } finally {

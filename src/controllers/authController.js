@@ -144,7 +144,7 @@ export const login = async (req, res) => {
     // Check if user account is pending approval
     if (user.status === 'pending') {
       return res.status(403).json({ 
-        error: 'Your account is pending approval. Please contact admin.',
+        error: 'Account Pending For Verification. Retry Login After 5 Mins.',
         status: user.status 
       });
     }

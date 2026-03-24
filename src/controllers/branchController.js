@@ -24,19 +24,39 @@ export const getBranchById = async (req, res) => {
   }
 };
 
+export const getNextBranchCode = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(code FROM 'FIPL(\\d+)') AS INTEGER)), 0) + 1 as next_seq
+       FROM branches WHERE code ~ '^FIPL\\d+$'`
+    );
+    const seq = String(result.rows[0].next_seq).padStart(3, '0');
+    res.json({ code: `FIPL${seq}` });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const createBranch = async (req, res) => {
   try {
-    const { name, code, address, city, state, pincode, is_active } = req.body;
-    if (!name || !code) {
-      return res.status(400).json({ error: 'Branch name and code are required' });
+    const { name, address, city, state, pincode, is_active } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Branch name is required' });
     }
+    // Auto-generate code
+    const seqResult = await db.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(code FROM 'FIPL(\\d+)') AS INTEGER)), 0) + 1 as next_seq
+       FROM branches WHERE code ~ '^FIPL\\d+$'`
+    );
+    const seq = String(seqResult.rows[0].next_seq).padStart(3, '0');
+    const code = `FIPL${seq}`;
     const result = await db.query(
       `INSERT INTO branches (name, code, address, city, state, pincode, is_active, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, code`,
       [name, code, address || null, city || null, state || null, pincode || null,
        is_active !== false, is_active !== false ? 'active' : 'inactive']
     );
-    res.status(201).json({ message: 'Branch created successfully', branchId: result.rows[0].id });
+    res.status(201).json({ message: 'Branch created successfully', branchId: result.rows[0].id, code: result.rows[0].code });
   } catch (error) {
     console.error('Create branch error:', error);
     if (error.code === '23505') return res.status(400).json({ error: 'Branch code already exists' });

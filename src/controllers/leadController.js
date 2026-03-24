@@ -561,22 +561,36 @@ export const deleteLead = async (req, res) => {
 
 export const getCustomerProfile = async (req, res) => {
   try {
-    const result = await db.query(
-      'SELECT * FROM customer_portal_access WHERE lead_id = $1',
-      [req.params.id]
-    );
-    
-    if (result.rows.length === 0) {
-      // Return empty profile instead of 404
-      return res.json({
-        lead_id: req.params.id,
-        customer_phone: null,
-        access_token: null,
-        last_login: null,
-        created_at: null
-      });
-    }
-    
+    // Auto-create table if not exists
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS customer_profiles (
+        id SERIAL PRIMARY KEY,
+        lead_id INT NOT NULL UNIQUE,
+        profile_type VARCHAR(50) DEFAULT 'salaried',
+        sub_type VARCHAR(50),
+        company_name VARCHAR(255),
+        designation VARCHAR(255),
+        current_job_experience_years NUMERIC(5,2),
+        total_work_experience_years NUMERIC(5,2),
+        net_monthly_salary NUMERIC(15,2),
+        salary_credit_mode VARCHAR(50) DEFAULT 'account_transfer',
+        salary_slip_available BOOLEAN DEFAULT false,
+        business_name VARCHAR(255),
+        business_vintage_years NUMERIC(5,2),
+        professional_type VARCHAR(100),
+        doctor_specialty VARCHAR(100),
+        freelancer_type VARCHAR(100),
+        practice_experience_years NUMERIC(5,2),
+        itr_available BOOLEAN DEFAULT false,
+        annual_income NUMERIC(15,2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+      )
+    `);
+
+    const result = await db.query('SELECT * FROM customer_profiles WHERE lead_id = $1', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Get customer profile error:', error);
@@ -587,17 +601,57 @@ export const getCustomerProfile = async (req, res) => {
 export const upsertCustomerProfile = async (req, res) => {
   try {
     const leadId = req.params.id;
-    const existing = await db.query('SELECT id FROM customer_portal_access WHERE lead_id = $1', [leadId]);
 
+    // Auto-create table if not exists
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS customer_profiles (
+        id SERIAL PRIMARY KEY,
+        lead_id INT NOT NULL UNIQUE,
+        profile_type VARCHAR(50) DEFAULT 'salaried',
+        sub_type VARCHAR(50),
+        company_name VARCHAR(255),
+        designation VARCHAR(255),
+        current_job_experience_years NUMERIC(5,2),
+        total_work_experience_years NUMERIC(5,2),
+        net_monthly_salary NUMERIC(15,2),
+        salary_credit_mode VARCHAR(50) DEFAULT 'account_transfer',
+        salary_slip_available BOOLEAN DEFAULT false,
+        business_name VARCHAR(255),
+        business_vintage_years NUMERIC(5,2),
+        professional_type VARCHAR(100),
+        doctor_specialty VARCHAR(100),
+        freelancer_type VARCHAR(100),
+        practice_experience_years NUMERIC(5,2),
+        itr_available BOOLEAN DEFAULT false,
+        annual_income NUMERIC(15,2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE
+      )
+    `);
+
+    const allowedFields = [
+      'profile_type', 'sub_type', 'company_name', 'designation',
+      'current_job_experience_years', 'total_work_experience_years',
+      'net_monthly_salary', 'salary_credit_mode', 'salary_slip_available',
+      'business_name', 'business_vintage_years', 'professional_type',
+      'doctor_specialty', 'freelancer_type', 'practice_experience_years',
+      'itr_available', 'annual_income'
+    ];
+    const safeBody = Object.fromEntries(
+      Object.entries(req.body).filter(([k]) => allowedFields.includes(k))
+    );
+
+    const existing = await db.query('SELECT id FROM customer_profiles WHERE lead_id = $1', [leadId]);
     if (existing.rows.length === 0) {
-      const { keys, values, params } = toPostgresParams({ ...req.body, lead_id: leadId });
+      const { keys, values, params } = toPostgresParams({ ...safeBody, lead_id: leadId });
       const result = await db.query(
-        `INSERT INTO customer_portal_access (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+        `INSERT INTO customer_profiles (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
         values
       );
       return res.status(201).json({ message: 'Profile created successfully', profileId: result.rows[0].id });
     } else {
-      const { query, values } = buildUpdateQuery('customer_portal_access', req.body, existing.rows[0].id);
+      const { query, values } = buildUpdateQuery('customer_profiles', { ...safeBody, updated_at: new Date() }, existing.rows[0].id);
       await db.query(query, values);
       return res.json({ message: 'Profile updated successfully' });
     }

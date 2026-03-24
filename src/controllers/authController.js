@@ -2,7 +2,6 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from '../config/database.js';
 import https from 'https';
-import http from 'http';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -27,8 +26,10 @@ const photoUpload = multer({
 });
 export const photoUploadMiddleware = photoUpload.single('photo');
 
-// In-memory OTP store: { phone: { otp, expiresAt } }
+// In-memory stores
 const mobileOtpStore = new Map();
+const aadhaarOtpStore = new Map();
+const signupSessions = new Map();
 
 const sendSarvSms = (phone, otp) => {
   return new Promise((resolve, reject) => {
@@ -52,55 +53,87 @@ const sendSarvSms = (phone, otp) => {
   });
 };
 
-export const updateProfilePhoto = async (req, res) => {
+// Step 1: Check PAN
+export const step1CheckPan = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, error: 'No photo uploaded' });
-    const relativePath = `uploads/profile-photos/${req.file.filename}`;
-    // Delete old photo if exists
-    const old = await db.query('SELECT photo_path FROM users WHERE id = $1', [req.user.id]);
-    if (old.rows[0]?.photo_path) {
-      const oldFile = path.join(process.cwd(), old.rows[0].photo_path);
-      if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
+    const { pan_number, pan_data, refer_code, role = 'executive' } = req.body;
+    
+    if (!pan_number || pan_number.length !== 10) {
+      return res.status(400).json({ success: false, error: 'Invalid PAN number format' });
     }
-    await db.query('UPDATE users SET photo_path = $1 WHERE id = $2', [relativePath, req.user.id]);
-    res.json({ success: true, photo_path: relativePath });
+    
+    const existingPan = await db.query('SELECT id, name, full_name FROM users WHERE pan_number = $1', [pan_number]);
+    if (existingPan.rows.length > 0) {
+      const existingUserName = existingPan.rows[0].name || existingPan.rows[0].full_name;
+      return res.status(400).json({ 
+        success: false,
+        error: `This PAN number is already registered with ${existingUserName}. Please use a different PAN number or contact support.`,
+        errorType: 'PAN_EXISTS'
+      });
+    }
+    
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    signupSessions.set(sessionId, {
+      step: 1,
+      pan_number,
+      pan_data: pan_data || null,
+      refer_code: refer_code || null,
+      role: role
+    });
+    
+    res.json({
+      success: true,
+      message: 'PAN verified successfully',
+      sessionId,
+      nextStep: 2
+    });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Step 1 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to verify PAN' });
   }
 };
 
-export const uploadPhoto = async (req, res) => {
+// Step 2: Send Mobile OTP
+export const step2SendMobileOtp = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, error: 'No photo uploaded' });
-    const relativePath = `uploads/profile-photos/${req.file.filename}`;
-    res.json({ success: true, photo_path: relativePath });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-export const sendMobileOtp = async (req, res) => {
-  try {
-    const { phone } = req.body;
+    const { phone, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
     if (!phone || !/^[6-9]\d{9}$/.test(phone)) {
       return res.status(400).json({ success: false, error: 'Invalid mobile number' });
     }
+    
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     mobileOtpStore.set(phone, { otp, expiresAt: Date.now() + 3 * 60 * 1000 });
     await sendSarvSms(phone, otp);
-    res.json({ success: true, message: 'OTP sent successfully' });
+    
+    const session = signupSessions.get(sessionId);
+    session.step = 2;
+    session.phone = phone;
+    
+    res.json({ success: true, message: 'OTP sent successfully', nextStep: 3 });
   } catch (error) {
-    console.error('Send mobile OTP error:', error);
+    console.error('Step 2 error:', error);
     res.status(500).json({ success: false, error: 'Failed to send OTP' });
   }
 };
 
-export const verifyMobileOtp = async (req, res) => {
+// Step 3: Verify Mobile OTP
+export const step3VerifyMobileOtp = async (req, res) => {
   try {
-    const { phone, otp } = req.body;
+    const { phone, otp, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
     if (!phone || !otp) {
       return res.status(400).json({ success: false, error: 'Phone and OTP are required' });
     }
+    
     const record = mobileOtpStore.get(phone);
     if (!record) {
       return res.status(400).json({ success: false, error: 'OTP not found. Please request a new OTP.' });
@@ -112,11 +145,232 @@ export const verifyMobileOtp = async (req, res) => {
     if (record.otp !== otp) {
       return res.status(400).json({ success: false, error: 'Invalid OTP. Please try again.' });
     }
+    
     mobileOtpStore.delete(phone);
-    res.json({ success: true, message: 'Mobile number verified successfully' });
+    const session = signupSessions.get(sessionId);
+    session.step = 3;
+    session.mobile_verified = true;
+    
+    res.json({ success: true, message: 'Mobile number verified successfully', nextStep: 4 });
   } catch (error) {
-    console.error('Verify mobile OTP error:', error);
+    console.error('Step 3 error:', error);
     res.status(500).json({ success: false, error: 'Failed to verify OTP' });
+  }
+};
+
+// Step 4: Email + Password
+export const step4EmailPassword = async (req, res) => {
+  try {
+    const { email, password, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required' });
+    }
+    
+    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ success: false, error: 'Email already exists' });
+    }
+    
+    const session = signupSessions.get(sessionId);
+    session.step = 4;
+    session.email = email;
+    session.password = password;
+    
+    res.json({ success: true, message: 'Email and password saved', nextStep: 5 });
+  } catch (error) {
+    console.error('Step 4 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to save email and password' });
+  }
+};
+
+// Step 5: Send Aadhaar OTP
+export const step5SendAadhaarOtp = async (req, res) => {
+  try {
+    const { aadhaar_number, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
+    if (!aadhaar_number || aadhaar_number.length !== 12) {
+      return res.status(400).json({ success: false, error: 'Invalid Aadhaar number format' });
+    }
+    
+    const existingAadhaar = await db.query('SELECT id, name, full_name FROM users WHERE aadhaar_number = $1', [aadhaar_number]);
+    if (existingAadhaar.rows.length > 0) {
+      const existingUserName = existingAadhaar.rows[0].name || existingAadhaar.rows[0].full_name;
+      return res.status(400).json({ 
+        success: false,
+        error: `This Aadhaar number is already registered with ${existingUserName}. Please use a different Aadhaar number or contact support.`,
+        errorType: 'AADHAAR_EXISTS'
+      });
+    }
+    
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    aadhaarOtpStore.set(aadhaar_number, { otp, expiresAt: Date.now() + 3 * 60 * 1000 });
+    await sendSarvSms(aadhaar_number.slice(-10), otp);
+    
+    const session = signupSessions.get(sessionId);
+    session.step = 5;
+    session.aadhaar_number = aadhaar_number;
+    
+    res.json({ success: true, message: 'OTP sent successfully', nextStep: 6 });
+  } catch (error) {
+    console.error('Step 5 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to send OTP' });
+  }
+};
+
+// Step 6: Verify Aadhaar OTP
+export const step6VerifyAadhaarOtp = async (req, res) => {
+  try {
+    const { aadhaar_number, otp, aadhaar_data, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
+    if (!aadhaar_number || !otp) {
+      return res.status(400).json({ success: false, error: 'Aadhaar number and OTP are required' });
+    }
+    
+    const record = aadhaarOtpStore.get(aadhaar_number);
+    if (!record) {
+      return res.status(400).json({ success: false, error: 'OTP not found. Please request a new OTP.' });
+    }
+    if (Date.now() > record.expiresAt) {
+      aadhaarOtpStore.delete(aadhaar_number);
+      return res.status(400).json({ success: false, error: 'OTP has expired. Please request a new OTP.' });
+    }
+    if (record.otp !== otp) {
+      return res.status(400).json({ success: false, error: 'Invalid OTP. Please try again.' });
+    }
+    
+    aadhaarOtpStore.delete(aadhaar_number);
+    const session = signupSessions.get(sessionId);
+    session.step = 6;
+    session.aadhaar_verified = true;
+    session.aadhaar_data = aadhaar_data || null;
+    
+    res.json({ success: true, message: 'Aadhaar verified successfully', nextStep: 7 });
+  } catch (error) {
+    console.error('Step 6 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to verify OTP' });
+  }
+};
+
+// Step 7: Upload Photo
+export const step7UploadPhoto = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No photo uploaded' });
+    }
+    
+    const relativePath = `uploads/profile-photos/${req.file.filename}`;
+    const session = signupSessions.get(sessionId);
+    session.step = 7;
+    session.photo_path = relativePath;
+    
+    res.json({ success: true, message: 'Photo uploaded successfully', nextStep: 8 });
+  } catch (error) {
+    console.error('Step 7 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to upload photo' });
+  }
+};
+
+// Step 8: Complete Profile
+export const step8CompleteProfile = async (req, res) => {
+  try {
+    const { name, sessionId } = req.body;
+    
+    if (!sessionId || !signupSessions.has(sessionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid session' });
+    }
+    
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Name is required' });
+    }
+    
+    const session = signupSessions.get(sessionId);
+    const hashedPassword = await bcrypt.hash(session.password, 10);
+    
+    // Determine status based on refer code
+    let finalStatus = 'pending';
+    let reportingTo = null;
+    
+    if (session.role === 'executive' && session.refer_code) {
+      const referrerResult = await db.query(
+        `SELECT id FROM users WHERE refer_code = $1 AND role = ANY($2)`,
+        [session.refer_code, ['branch_manager', 'dsa', 'sales_manager', 'team_leader']]
+      );
+      
+      if (referrerResult.rows.length === 0) {
+        return res.status(400).json({ success: false, error: 'Invalid refer code' });
+      }
+      
+      finalStatus = 'active';
+      reportingTo = referrerResult.rows[0].id;
+    }
+    
+    if (['admin', 'sales_manager'].includes(session.role)) {
+      finalStatus = 'active';
+    }
+    
+    // Generate user ID
+    const seqResult = await db.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM 'FN(\\d+)') AS INTEGER)), 0) + 1 as next_seq
+       FROM users WHERE user_id LIKE 'FN%'`
+    );
+    const sequence = String(seqResult.rows[0].next_seq).padStart(5, '0');
+    const userId = `FN${sequence}`;
+    
+    // Create user
+    const result = await db.query(
+      `INSERT INTO users (
+        user_id, name, full_name, email, password, phone, role, status, reporting_to,
+        pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
+        photo_path, kyc_completed, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+       RETURNING id, user_id, email, role, status`,
+      [
+        userId, name, name, session.email, hashedPassword, session.phone, session.role, finalStatus, reportingTo,
+        session.pan_number, session.aadhaar_number,
+        session.pan_data ? JSON.stringify(session.pan_data) : null,
+        session.aadhaar_data ? JSON.stringify(session.aadhaar_data) : null,
+        !!session.pan_data, !!session.aadhaar_data,
+        session.photo_path || null, !!(session.pan_data && session.aadhaar_data),
+        new Date(), new Date()
+      ]
+    );
+    
+    signupSessions.delete(sessionId);
+    const user = result.rows[0];
+    
+    res.status(201).json({
+      success: true,
+      message: finalStatus === 'active' ? 'Account created successfully!' : 'Account created. Awaiting approval.',
+      user: {
+        id: user.id,
+        user_id: user.user_id,
+        email: user.email,
+        role: user.role,
+        status: user.status
+      }
+    });
+  } catch (error) {
+    console.error('Step 8 error:', error);
+    res.status(500).json({ success: false, error: 'Failed to complete profile' });
   }
 };
 
@@ -141,7 +395,6 @@ export const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check if user account is pending approval
     if (user.status === 'pending') {
       return res.status(403).json({ 
         error: 'Account Pending For Verification. Retry Login After 5 Mins.',
@@ -149,7 +402,6 @@ export const login = async (req, res) => {
       });
     }
 
-    // Check if account is suspended or inactive
     if (user.status === 'suspended') {
       return res.status(403).json({ 
         error: 'Your account has been suspended. Please contact admin.',
@@ -190,257 +442,6 @@ export const login = async (req, res) => {
   }
 };
 
-export const signup = async (req, res) => {
-  try {
-    const { 
-      name, 
-      email, 
-      password, 
-      phone, 
-      role = 'executive',
-      refer_code,
-      pan_number,
-      aadhaar_number,
-      pan_data,
-      aadhaar_data,
-      photo_path
-    } = req.body;
-    
-    // Validate required fields
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: 'Name, email, and password are required' });
-    }
-    
-    const hashedPassword = await bcrypt.hash(password, 10);
-    
-    // Check if email already exists
-    const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existingUser.rows.length > 0) {
-      return res.status(400).json({ error: 'Email already exists' });
-    }
-    
-    // Check if PAN number already exists (if provided)
-    if (pan_number) {
-      const existingPan = await db.query('SELECT id, name, full_name FROM users WHERE pan_number = $1', [pan_number]);
-      if (existingPan.rows.length > 0) {
-        const existingUserName = existingPan.rows[0].name || existingPan.rows[0].full_name;
-        return res.status(400).json({ 
-          error: `This PAN number is already registered with ${existingUserName}. Please use a different PAN number or contact support.`,
-          errorType: 'PAN_EXISTS'
-        });
-      }
-    }
-    
-    // Check if Aadhaar number already exists (if provided)
-    if (aadhaar_number) {
-      const existingAadhaar = await db.query('SELECT id, name, full_name FROM users WHERE aadhaar_number = $1', [aadhaar_number]);
-      if (existingAadhaar.rows.length > 0) {
-        const existingUserName = existingAadhaar.rows[0].name || existingAadhaar.rows[0].full_name;
-        return res.status(400).json({ 
-          error: `This Aadhaar number is already registered with ${existingUserName}. Please use a different Aadhaar number or contact support.`,
-          errorType: 'AADHAAR_EXISTS'
-        });
-      }
-    }
-    
-    // Determine status and reporting_to based on refer code
-    let finalStatus = 'pending'; // Default to pending approval
-    let reportingTo = null;
-    let approvalMessage = 'Account created successfully! Please wait for admin approval to login.';
-    
-    // Handle refer code logic for executives
-    if (role === 'executive' && refer_code) {
-      // Find the user with this refer code
-      const referrerResult = await db.query(
-        `SELECT id, role, name, full_name FROM users 
-         WHERE refer_code = $1 AND role = ANY($2)`,
-        [refer_code, ['branch_manager', 'dsa', 'sales_manager', 'team_leader']]
-      );
-      
-      if (referrerResult.rows.length === 0) {
-        return res.status(400).json({ error: 'Invalid refer code. Please check and try again.' });
-      }
-      
-      const referrer = referrerResult.rows[0];
-      
-      // Auto-approve and assign to referrer's team
-      finalStatus = 'active';
-      reportingTo = referrer.id;
-      approvalMessage = 'Account created successfully! You can now login and start working.';
-      
-      console.log(`Executive ${name} joining ${referrer.name || referrer.full_name}'s team via refer code ${refer_code}`);
-    }
-    
-    // Admin and sales_manager roles are auto-approved
-    if (['admin', 'sales_manager'].includes(role)) {
-      finalStatus = 'active';
-      approvalMessage = 'Account created successfully! You can now login.';
-    }
-    
-    // DSA always needs approval regardless of refer code
-    if (role === 'dsa') {
-      finalStatus = 'pending';
-      approvalMessage = 'DSA account created successfully! Please wait for admin approval to login.';
-    }
-    
-    // Generate unique user ID in format FN00001
-    const seqResult = await db.query(
-      `SELECT COALESCE(MAX(CAST(SUBSTRING(user_id FROM 'FN(\\d+)') AS INTEGER)), 0) + 1 as next_seq
-       FROM users WHERE user_id LIKE 'FN%'`
-    );
-    const sequence = String(seqResult.rows[0].next_seq).padStart(5, '0');
-    const userId = `FN${sequence}`;
-    
-    // Insert user with complete KYC data
-    const result = await db.query(
-      `INSERT INTO users (
-        user_id, name, full_name, email, password, phone, role, status, reporting_to, 
-        pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
-        date_of_birth, gender, father_name, address_line1, address_line2, city, state, pincode, country,
-        kyc_completed, photo_path, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) 
-       RETURNING id, user_id, name, full_name, email, role, status, pan_verified, aadhaar_verified, kyc_completed`,
-      [
-        userId, name, name, email, hashedPassword, phone || null, role, finalStatus, reportingTo,
-        pan_number || null, aadhaar_number || null,
-        pan_data ? JSON.stringify(pan_data) : null,
-        aadhaar_data ? JSON.stringify(aadhaar_data) : null,
-        !!pan_data, !!aadhaar_data,
-        pan_data?.dob || aadhaar_data?.date_of_birth || null,
-        pan_data?.gender || aadhaar_data?.gender || null,
-        aadhaar_data?.father_name || null,
-        pan_data?.address?.line_1 || aadhaar_data?.address?.split(',')[0] || null,
-        pan_data?.address?.line_2 || null,
-        pan_data?.address?.city || aadhaar_data?.address?.split(',')[1] || null,
-        pan_data?.address?.state || aadhaar_data?.address?.split(',')[2] || null,
-        pan_data?.address?.zip || null,
-        pan_data?.address?.country || 'INDIA',
-        !!(pan_data && aadhaar_data),
-        photo_path || null,
-        new Date(), new Date()
-      ]
-    );
-    
-    const user = result.rows[0];
-    
-    res.status(201).json({ 
-      message: approvalMessage,
-      userId: user.id,
-      user: {
-        id: user.id,
-        user_id: user.user_id,
-        name: user.name || user.full_name,
-        email: user.email,
-        role: user.role,
-        status: user.status
-      },
-      approved_via_refer: !!(refer_code && role === 'executive' && finalStatus === 'active'),
-      requires_approval: finalStatus === 'pending',
-      approval_type: finalStatus === 'pending' ? (role === 'dsa' ? 'DSA_APPROVAL' : 'ADMIN_APPROVAL') : null
-    });
-    
-  } catch (error) {
-    console.error('Signup error:', error);
-    
-    if (error.code === '23505') {
-      return res.status(400).json({ error: 'Email already exists' });
-    }
-    
-    if (error.code === '42P01') {
-      return res.status(500).json({ error: 'Database table not found. Please contact administrator.' });
-    }
-    
-    res.status(500).json({ error: `Failed to create account: ${error.message}` });
-  }
-};
-
-export const checkPan = async (req, res) => {
-  try {
-    const { pan_number } = req.body;
-    
-    if (!pan_number || pan_number.length !== 10) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid PAN number format' 
-      });
-    }
-    
-    // Check if PAN number already exists
-    const existingPan = await db.query('SELECT id, name, full_name FROM users WHERE pan_number = $1', [pan_number]);
-    if (existingPan.rows.length > 0) {
-      const existingUserName = existingPan.rows[0].name || existingPan.rows[0].full_name;
-      return res.status(400).json({ 
-        success: false,
-        error: `This PAN number is already registered with ${existingUserName}. Please use a different PAN number or contact support.`,
-        errorType: 'PAN_EXISTS'
-      });
-    }
-    
-    // PAN is available
-    res.json({
-      success: true,
-      message: 'PAN number is available for registration'
-    });
-    
-  } catch (error) {
-    console.error('Check PAN error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to check PAN availability' 
-    });
-  }
-};
-
-export const checkAadhaar = async (req, res) => {
-  try {
-    const { aadhaar_number } = req.body;
-    
-    if (!aadhaar_number || aadhaar_number.length !== 12) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid Aadhaar number format' 
-      });
-    }
-    
-    // Check if Aadhaar number already exists
-    const existingAadhaar = await db.query('SELECT id, name, full_name FROM users WHERE aadhaar_number = $1', [aadhaar_number]);
-    if (existingAadhaar.rows.length > 0) {
-      const existingUserName = existingAadhaar.rows[0].name || existingAadhaar.rows[0].full_name;
-      return res.status(400).json({ 
-        success: false,
-        error: `This Aadhaar number is already registered with ${existingUserName}. Please use a different Aadhaar number or contact support.`,
-        errorType: 'AADHAAR_EXISTS'
-      });
-    }
-    
-    // Aadhaar is available
-    res.json({
-      success: true,
-      message: 'Aadhaar number is available for registration'
-    });
-    
-  } catch (error) {
-    console.error('Check Aadhaar error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to check Aadhaar availability' 
-    });
-  }
-};
-
-export const updatePhone = async (req, res) => {
-  try {
-    const { phone } = req.body;
-    if (!phone || phone.length !== 10) {
-      return res.status(400).json({ error: 'Invalid phone number' });
-    }
-    await db.query('UPDATE users SET phone = $1 WHERE id = $2', [phone, req.user.id]);
-    res.json({ success: true, message: 'Phone updated successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
 export const getProfile = async (req, res) => {
   try {
     const result = await db.query(`
@@ -466,7 +467,6 @@ export const getProfile = async (req, res) => {
     
     const user = result.rows[0];
     
-    // Parse JSON data
     let panData = null;
     let aadhaarData = null;
     
@@ -501,7 +501,6 @@ export const getProfile = async (req, res) => {
       created_at: user.created_at,
       updated_at: user.updated_at,
       
-      // KYC Information
       kyc: {
         pan_number: user.pan_number,
         aadhaar_number: user.aadhaar_number,
@@ -509,12 +508,10 @@ export const getProfile = async (req, res) => {
         aadhaar_verified: user.aadhaar_verified,
         kyc_completed: user.kyc_completed,
         
-        // Personal Details
         date_of_birth: user.date_of_birth,
         gender: user.gender,
         father_name: user.father_name,
         
-        // Address Details
         address: {
           line1: user.address_line1,
           line2: user.address_line2,
@@ -524,7 +521,6 @@ export const getProfile = async (req, res) => {
           country: user.country
         },
         
-        // Raw KYC Data
         pan_details: panData,
         aadhaar_details: aadhaarData
       },

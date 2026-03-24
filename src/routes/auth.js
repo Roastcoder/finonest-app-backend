@@ -1,18 +1,35 @@
 import express from 'express';
-import { login, signup, getProfile, checkPan, checkAadhaar, updatePhone, sendMobileOtp, verifyMobileOtp, uploadPhoto, photoUploadMiddleware, updateProfilePhoto } from '../controllers/authController.js';
+import { 
+  login, 
+  getProfile,
+  step1CheckPan,
+  step2SendMobileOtp,
+  step3VerifyMobileOtp,
+  step4EmailPassword,
+  step5SendAadhaarOtp,
+  step6VerifyAadhaarOtp,
+  step7UploadPhoto,
+  step8CompleteProfile,
+  photoUploadMiddleware
+} from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Login
 router.post('/login', login);
-router.post('/signup', signup);
-router.post('/check-pan', checkPan);
-router.post('/check-aadhaar', checkAadhaar);
-router.post('/send-mobile-otp', sendMobileOtp);
-router.post('/verify-mobile-otp', verifyMobileOtp);
-router.post('/upload-photo', photoUploadMiddleware, uploadPhoto);
+
+// Multi-step signup flow
+router.post('/signup/step1-pan', step1CheckPan);
+router.post('/signup/step2-send-mobile-otp', step2SendMobileOtp);
+router.post('/signup/step3-verify-mobile-otp', step3VerifyMobileOtp);
+router.post('/signup/step4-email-password', step4EmailPassword);
+router.post('/signup/step5-send-aadhaar-otp', step5SendAadhaarOtp);
+router.post('/signup/step6-verify-aadhaar-otp', step6VerifyAadhaarOtp);
+router.post('/signup/step7-upload-photo', photoUploadMiddleware, step7UploadPhoto);
+router.post('/signup/step8-complete', step8CompleteProfile);
+
+// Profile
 router.get('/profile', authenticate, getProfile);
-router.put('/profile/phone', authenticate, updatePhone);
-router.put('/profile/photo', authenticate, photoUploadMiddleware, updateProfilePhoto);
 
 export default router;

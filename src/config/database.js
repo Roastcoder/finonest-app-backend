@@ -9,8 +9,8 @@ const { Pool } = pg;
 const isProduction = process.env.NODE_ENV === 'production';
 const connectionString = process.env.DATABASE_URL;
 
-// Use SSL only if explicitly requested or if in production AND not explicitly disabled
-const useSSL = process.env.DB_SSL === 'true' || (isProduction && process.env.DB_SSL !== 'false');
+// Use SSL only if explicitly requested via environment variable
+const useSSL = process.env.DB_SSL === 'true';
 
 const poolConfig = connectionString 
   ? { 

@@ -89,7 +89,7 @@ export const getAllUsers = async (req, res) => {
 export const getUserById = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name,
              m.full_name as manager_name,
              d.full_name as dsa_name
@@ -114,11 +114,12 @@ export const createUser = async (req, res) => {
     await client.query('BEGIN');
 
     const { password, mpin, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
+    const effectivePassword = password || mpin;
 
     // Validation
-    if (!password || !role || !full_name || !phone) {
+    if (!mpin || !role || !full_name || !phone) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Password, role, full name, and phone are required' });
+      return res.status(400).json({ error: 'MPIN, role, full name, and phone are required' });
     }
 
     // Validate phone number
@@ -198,7 +199,7 @@ export const createUser = async (req, res) => {
       return res.status(400).json({ error: 'Phone number already exists' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(effectivePassword, 10);
     const hashedMpin = mpin ? await bcrypt.hash(mpin, 10) : null;
 
     // Generate unique user ID with FN prefix
@@ -269,7 +270,7 @@ export const createUser = async (req, res) => {
     
     // Fetch the created user with branch name
     const createdUser = await client.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at, u.refer_code,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at, u.refer_code,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -465,7 +466,7 @@ export const searchUser = async (req, res) => {
   try {
     const { name } = req.query;
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.role, u.reporting_to, u.dsa_id,
+      SELECT u.id, u.user_id, u.full_name, u.role, u.reporting_to, u.dsa_id,
              m.full_name as manager_name, m.role as manager_role,
              d.full_name as dsa_name
       FROM users u
@@ -482,7 +483,7 @@ export const searchUser = async (req, res) => {
 export const getTeamMembers = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -507,7 +508,7 @@ export const getUsersByRole = async (req, res) => {
     const placeholders = roleArray.map((_, i) => `$${i + 1}`).join(',');
     
     const result = await db.query(`
-      SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
              b.name as branch_name
       FROM users u
       LEFT JOIN branches b ON u.branch_id = b.id
@@ -530,7 +531,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
     if (req.user.role === 'sales_manager') {
       // sales_manager sees all branch_managers and DSAs reporting to them, with their team leaders
       const directReports = await db.query(`
-        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+        SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
@@ -543,7 +544,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
       const hierarchy = await Promise.all(
         directReports.rows.map(async (report) => {
           const teamMembers = await db.query(`
-            SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+            SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                    b.name as branch_name
             FROM users u
             LEFT JOIN branches b ON u.branch_id = b.id
@@ -556,7 +557,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
       return res.json(hierarchy);
     } else if (req.user.role === 'branch_manager') {
       teamLeaders = await db.query(`
-        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+        SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
@@ -565,7 +566,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
       `, [req.user.id]);
     } else if (req.user.role === 'dsa') {
       teamLeaders = await db.query(`
-        SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+        SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                b.name as branch_name
         FROM users u
         LEFT JOIN branches b ON u.branch_id = b.id
@@ -584,7 +585,7 @@ export const getManagerTeamHierarchy = async (req, res) => {
     const hierarchy = await Promise.all(
       teamLeaders.rows.map(async (leader) => {
         const teamMembers = await db.query(`
-          SELECT u.id, u.user_id, u.full_name, u.email, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
+          SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at,
                  b.name as branch_name
           FROM users u
           LEFT JOIN branches b ON u.branch_id = b.id

@@ -24,23 +24,19 @@ router.get('/debug/:id', (req, res) => {
   });
 });
 
-// Public download route for testing
-router.get('/:id/download-test', downloadDocument);
+// Public document access routes (NO authentication required)
+router.get('/:id/download', downloadDocument); // Public access for document download
+router.get('/:id/preview', downloadDocument); // Public access for document preview
+router.get('/:id/view', downloadDocument); // Alternative public access route
 
-// Protected routes
-router.use(authenticate);
+// Authenticated routes for document management
+router.get('/', authenticate, getAllDocuments);
+router.get('/lead/:leadId', authenticate, getDocumentsByLead);
+router.get('/:id', authenticate, getDocumentById);
 
-router.get('/', getAllDocuments);
-router.get('/lead/:leadId', getDocumentsByLead);
-router.get('/:id/download', downloadDocument);
-router.get('/:id/preview', async (req, res) => {
-  const API = process.env.API_URL || `http://localhost:${process.env.PORT || 5000}/api`;
-  const token = req.headers.authorization?.split(' ')[1] || '';
-  res.json({ signedUrl: `${API}/documents/${req.params.id}/download?token=${token}` });
-});
-router.get('/:id', getDocumentById);
-router.post('/', uploadMiddleware, uploadDocument);
-router.put('/:id/status', authorize('admin', 'manager', 'team_leader'), updateDocumentStatus);
-router.delete('/:id', authorize('admin', 'manager'), deleteDocument);
+// Upload and management routes
+router.post('/', authenticate, uploadMiddleware, uploadDocument);
+router.put('/:id/status', authenticate, authorize('admin', 'manager', 'team_leader'), updateDocumentStatus);
+router.delete('/:id', authenticate, authorize('admin', 'manager'), deleteDocument);
 
 export default router;

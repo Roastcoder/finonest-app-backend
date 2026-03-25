@@ -213,85 +213,61 @@ export const deleteDocument = async (req, res) => {
 
 export const downloadDocument = async (req, res) => {
   try {
-    // Support token via query param for iframe preview
-    if (!req.user && req.query.token) {
-      try {
-        const jwt = await import('jsonwebtoken');
-        req.user = jwt.default.verify(req.query.token, process.env.JWT_SECRET || 'your-secret-key');
-      } catch { return res.status(401).json({ error: 'Invalid token' }); }
-    }
-    
+    // No authentication required - allow public access to documents
     const result = await db.query(
       'SELECT file_path, file_name, document_type FROM documents WHERE id = $1',
       [req.params.id]
     );
     
     if (result.rows.length === 0) {
-      console.log('Document not found in database:', req.params.id);
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    const { file_path, file_name, document_type } = result.rows[0];
-    console.log('Document found in DB:', { file_path, file_name, document_type });
+    const { file_path, file_name } = result.rows[0];
     
-    // Normalize path: replace backslashes with forward slashes (Windows paths stored in DB)
+    // Normalize and resolve file path
     const normalizedFilePath = file_path.replace(/\\/g, '/');
-    
-    // Always resolve using just the filename to handle cross-platform path issues
     const fileNameInStorage = normalizedFilePath.split('/').pop();
     let resolvedPath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
     
-    // Fallback: try the stored path as-is (relative or absolute)
     if (!fs.existsSync(resolvedPath)) {
-      const fallback = path.isAbsolute(normalizedFilePath)
-        ? normalizedFilePath
-        : path.join(process.cwd(), normalizedFilePath);
+      const fallback = path.isAbsolute(normalizedFilePath) ? normalizedFilePath : path.join(process.cwd(), normalizedFilePath);
       if (fs.existsSync(fallback)) resolvedPath = fallback;
     }
 
     if (!fs.existsSync(resolvedPath)) {
-      console.log('File NOT found on filesystem anywhere:', resolvedPath);
-      return res.status(404).json({ 
-        error: 'File not found on server',
-        details: 'The document record exists but the physical file is missing.'
-      });
+      return res.status(404).json({ error: 'File not found on server' });
     }
 
-    console.log('Serving file from:', resolvedPath);
-
-    // Set appropriate content type
+    // Set headers for PDF preview
     const ext = path.extname(file_name).toLowerCase();
     let contentType = 'application/octet-stream';
     
     switch (ext) {
-      case '.pdf':
-        contentType = 'application/pdf';
-        break;
+      case '.pdf': contentType = 'application/pdf'; break;
       case '.jpg':
-      case '.jpeg':
-        contentType = 'image/jpeg';
-        break;
-      case '.png':
-        contentType = 'image/png';
-        break;
+      case '.jpeg': contentType = 'image/jpeg'; break;
+      case '.png': contentType = 'image/png'; break;
     }
 
+    // Add CORS headers for iframe preview
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `inline; filename="${file_name}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     
     // Stream the file
     const fileStream = fs.createReadStream(resolvedPath);
     fileStream.pipe(res);
     
     fileStream.on('error', (error) => {
-      console.error('File stream error:', error);
       if (!res.headersSent) {
         res.status(500).json({ error: 'Error reading file' });
       }
     });
     
   } catch (error) {
-    console.error('Download document error:', error);
     res.status(500).json({ error: error.message });
   }
 };

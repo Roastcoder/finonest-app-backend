@@ -113,12 +113,24 @@ export const createUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { password, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
+    const { password, mpin, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
 
     // Validation
     if (!password || !role || !full_name || !phone) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Password, role, full name, and phone are required' });
+    }
+
+    // Validate phone number
+    if (!/^\d{10}$/.test(phone)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Phone number must be exactly 10 digits' });
+    }
+
+    // Validate MPIN if provided
+    if (mpin && !/^\d{4}$/.test(mpin)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'MPIN must be exactly 4 digits' });
     }
 
     // Role-based permissions
@@ -187,6 +199,7 @@ export const createUser = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedMpin = mpin ? await bcrypt.hash(mpin, 10) : null;
 
     // Generate unique user ID with FN prefix
     const seqResult = await client.query(
@@ -203,6 +216,7 @@ export const createUser = async (req, res) => {
       full_name: full_name,
       phone,
       password: hashedPassword,
+      mpin: hashedMpin,
       role,
       branch_id: branch_id || null,
       reporting_to: reporting_to || null,

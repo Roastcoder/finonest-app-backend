@@ -153,6 +153,7 @@ app.listen(PORT, async () => {
     // users - KYC & profile
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id VARCHAR(20)',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)',
+    'ALTER TABLE users ADD COLUMN IF NOT EXISTS mpin VARCHAR(255)',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS refer_code VARCHAR(50)',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20)',
     'ALTER TABLE users ADD COLUMN IF NOT EXISTS aadhaar_number VARCHAR(20)',

@@ -55,7 +55,7 @@ const handleFindQuery = async (message) => {
     
     // Users queries
     if (message.includes('user')) {
-      const result = await pool.query('SELECT id, user_id, full_name, email, role, status FROM users ORDER BY created_at DESC LIMIT 10');
+      const result = await pool.query('SELECT id, user_id, full_name, role, status FROM users ORDER BY created_at DESC LIMIT 10');
       return formatResults('Users', result.rows);
     }
     

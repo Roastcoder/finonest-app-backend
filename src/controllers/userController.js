@@ -16,7 +16,7 @@ export const getHierarchyTree = async (req, res) => {
       query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     } else if (req.user.role === 'branch_manager') {
-      query += ` WHERE u.reporting_to = $1 OR u.role = 'executive'`;
+      query += ` WHERE u.reporting_to = $1`;
       params.push(req.user.id);
     } else if (req.user.role === 'dsa') {
       query += ` WHERE u.dsa_id = $1`;
@@ -276,6 +276,8 @@ export const createUser = async (req, res) => {
       LEFT JOIN branches b ON u.branch_id = b.id
       WHERE u.id = $1
     `, [result.rows[0].id]);
+
+    await client.query('COMMIT');
     
     res.status(201).json({
       message: 'User created successfully',

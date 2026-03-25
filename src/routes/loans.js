@@ -16,16 +16,16 @@ router.get('/:id/documents', async (req, res) => {
     if (loanResult.rows.length === 0) return res.status(404).json({ error: 'Loan not found' });
     const { lead_id } = loanResult.rows[0];
 
-    // Fetch by loan_id if available, else by lead_id
+    // Fetch documents with priority: loan_id first, then lead_id (avoid duplicates)
     let docs;
     const hasLoanIdCol = await db.query(`SELECT 1 FROM information_schema.columns WHERE table_name='documents' AND column_name='loan_id'`);
     if (hasLoanIdCol.rows.length > 0) {
       docs = await db.query(
-        `SELECT d.*, COALESCE(u.full_name, u.user_id) as uploaded_by_name
+        `SELECT DISTINCT ON (d.id) d.*, COALESCE(u.full_name, u.user_id) as uploaded_by_name
          FROM documents d
          LEFT JOIN users u ON d.uploaded_by = u.id
-         WHERE d.loan_id = $1 OR ($2::int IS NOT NULL AND d.lead_id = $2)
-         ORDER BY d.document_type, d.created_at DESC`,
+         WHERE d.loan_id = $1 OR ($2::int IS NOT NULL AND d.lead_id = $2 AND d.loan_id IS NULL)
+         ORDER BY d.id, d.document_type, d.created_at DESC`,
         [req.params.id, lead_id || null]
       );
     } else {

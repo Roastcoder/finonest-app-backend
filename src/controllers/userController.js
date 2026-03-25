@@ -223,7 +223,7 @@ export const createUser = async (req, res) => {
       reporting_to: reporting_to || null,
       dsa_id: dsa_id || null,
       joining_date: new Date().toISOString().split('T')[0],
-      status: 'pending'
+      status: 'active'
     };
 
     const { keys, values, params } = toPostgresParams(userData);

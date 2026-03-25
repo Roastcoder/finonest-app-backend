@@ -2,6 +2,7 @@ import express from 'express';
 import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoan, updateLoanStage } from '../controllers/loanController.js';
 import { authenticate } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
+import { uploadMiddleware, uploadDocument } from '../controllers/documentController.js';
 import db from '../config/database.js';
 
 const router = express.Router();
@@ -43,6 +44,7 @@ router.get('/:id/documents', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+router.post('/:id/documents', uploadMiddleware, uploadDocument);
 router.get('/:id', getLoanById);
 router.post('/', auditLogger('loans', 'CREATE_LOAN'), createLoan);
 router.put('/:id', auditLogger('loans', 'UPDATE_LOAN'), updateLoan);

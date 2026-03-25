@@ -149,7 +149,7 @@ export const login = async (req, res) => {
     // Check if user account is pending approval
     if (user.status === 'pending') {
       return res.status(403).json({ 
-        error: 'Invalid phone number or MPIN. Please try again.',
+        error: 'Account Pending For Verification. Retry Login After 5 Mins.',
         status: user.status 
       });
     }

@@ -354,32 +354,96 @@ export const updateUser = async (req, res) => {
 };
 
 export const deleteUser = async (req, res) => {
+  const client = await db.connect();
   try {
+    await client.query('BEGIN');
+    
     // Only admin can delete users
     if (req.user.role !== 'admin') {
+      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Only admins can delete users' });
     }
 
+    // Check if user exists and get their details
+    const userResult = await client.query(
+      'SELECT id, full_name, pan_number, aadhaar_number FROM users WHERE id = $1',
+      [req.params.id]
+    );
+    
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = userResult.rows[0];
+
     // Check if user has any dependencies
-    const dependencies = await db.query(
+    const dependencies = await client.query(
       'SELECT COUNT(*) as count FROM users WHERE reporting_to = $1 OR dsa_id = $1',
       [req.params.id]
     );
     
     if (dependencies.rows[0].count > 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ 
         error: 'Cannot delete user with team members. Please reassign team members first.' 
       });
     }
 
-    const result = await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'User not found' });
+    // Delete all user-related data
+    console.log(`Deleting user ${user.full_name} (ID: ${user.id}) with all related data...`);
+    
+    // Delete user record (this will cascade delete related data due to foreign key constraints)
+    // But we'll explicitly clear sensitive data first
+    await client.query(
+      `UPDATE users SET 
+        pan_number = NULL,
+        aadhaar_number = NULL,
+        pan_data = NULL,
+        aadhaar_data = NULL,
+        pan_verified = false,
+        aadhaar_verified = false,
+        kyc_completed = false,
+        photo_path = NULL,
+        date_of_birth = NULL,
+        father_name = NULL,
+        address_line1 = NULL,
+        address_line2 = NULL,
+        city = NULL,
+        state = NULL,
+        pincode = NULL,
+        country = NULL
+      WHERE id = $1`,
+      [req.params.id]
+    );
+    
+    // Now delete the user record completely
+    const deleteResult = await client.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    
+    if (deleteResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Failed to delete user' });
     }
-    res.json({ message: 'User deleted successfully' });
+    
+    await client.query('COMMIT');
+    
+    console.log(`Successfully deleted user ${user.full_name} and all related data including PAN: ${user.pan_number || 'N/A'}, Aadhaar: ${user.aadhaar_number || 'N/A'}`);
+    
+    res.json({ 
+      message: 'User and all related data deleted successfully',
+      deletedUser: {
+        id: user.id,
+        name: user.full_name,
+        pan_cleared: !!user.pan_number,
+        aadhaar_cleared: !!user.aadhaar_number
+      }
+    });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Delete user error:', error);
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 };
 

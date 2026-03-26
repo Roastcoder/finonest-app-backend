@@ -113,8 +113,7 @@ export const createUser = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { password, mpin, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
-    const effectivePassword = password || mpin;
+    const { mpin, role, full_name, phone, branch_id, reporting_to, dsa_id } = req.body;
 
     // Validation
     if (!mpin || !role || !full_name || !phone) {
@@ -199,8 +198,8 @@ export const createUser = async (req, res) => {
       return res.status(400).json({ error: 'Phone number already exists' });
     }
 
-    const hashedPassword = await bcrypt.hash(effectivePassword, 10);
-    const hashedMpin = mpin ? await bcrypt.hash(mpin, 10) : null;
+    const hashedPassword = await bcrypt.hash(mpin, 10);
+    const hashedMpin = await bcrypt.hash(mpin, 10);
 
     // Generate unique user ID with FN prefix
     const seqResult = await client.query(

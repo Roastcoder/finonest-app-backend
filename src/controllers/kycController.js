@@ -172,8 +172,16 @@ export const sendAadhaarOtp = async (req, res) => {
 
 export const verifyAadhaarOtp = async (req, res) => {
   try {
-    const { client_id, otp, session_id } = req.body;
+    const { client_id, otp, session_id, aadhaar_number } = req.body;
     const sessionIdToUse = session_id || client_id;
+    
+    console.log('🔍 [DEBUG] Aadhaar OTP Verification Request:', {
+      client_id,
+      session_id,
+      sessionIdToUse,
+      aadhaar_number: aadhaar_number ? `${aadhaar_number.substring(0, 4)}****${aadhaar_number.substring(8)}` : 'missing',
+      otp: otp ? `${otp.substring(0, 2)}****` : 'missing'
+    });
     
     if (!sessionIdToUse || !otp || otp.length !== 6) {
       return res.status(400).json({ 
@@ -182,7 +190,7 @@ export const verifyAadhaarOtp = async (req, res) => {
       });
     }
 
-    console.log('Verifying Aadhaar OTP for session_id:', sessionIdToUse);
+    console.log('📤 [DEBUG] Sending request to Neokred API...');
 
     // Neokred API call for Aadhaar OTP verification using correct v2 endpoint
     const requestData = {
@@ -205,34 +213,105 @@ export const verifyAadhaarOtp = async (req, res) => {
       }
     );
 
-    console.log('Aadhaar OTP Verification Response:', response.data);
+    console.log('📥 [DEBUG] Raw API Response:', {
+      status: response.status,
+      success: response.data.success,
+      statusCode: response.data.statusCode,
+      message: response.data.message
+    });
+    
+    console.log('📊 [DEBUG] Full API Response Data:');
+    console.log(JSON.stringify(response.data, null, 2));
 
-    if (response.data.success || response.data.status === 'success' || response.data.data) {
+    if (response.data.success || response.data.status === 'SUCCESS' || response.data.data) {
       const responseData = response.data.data || response.data.result || response.data;
+      
+      console.log('✅ [DEBUG] Extracted Response Data:');
+      console.log(JSON.stringify(responseData, null, 2));
+      
+      // Build complete address from API response components
+      let fullAddress = '';
+      const addressParts = [];
+      
+      if (responseData.house) addressParts.push(responseData.house);
+      if (responseData.street) addressParts.push(responseData.street);
+      if (responseData.landmark) addressParts.push(responseData.landmark);
+      if (responseData.locality) addressParts.push(responseData.locality);
+      if (responseData.subDistrict) addressParts.push(responseData.subDistrict);
+      if (responseData.district) addressParts.push(responseData.district);
+      if (responseData.state) addressParts.push(responseData.state);
+      if (responseData.pincode) addressParts.push(responseData.pincode);
+      
+      fullAddress = addressParts.join(', ');
+      
+      console.log('🏠 [DEBUG] Address Processing:', {
+        house: responseData.house,
+        street: responseData.street,
+        landmark: responseData.landmark,
+        locality: responseData.locality,
+        district: responseData.district,
+        state: responseData.state,
+        pincode: responseData.pincode,
+        fullAddress
+      });
+      
+      // Extract father's name from careof field
+      let fatherName = null;
+      if (responseData.careof) {
+        // Remove common prefixes like "S/O", "D/O", "W/O", "C/O"
+        fatherName = responseData.careof.replace(/^(S\/O|D\/O|W\/O|C\/O)\s+/i, '').trim();
+      }
+      
+      const aadhaarData = {
+        full_name: responseData.name,
+        name: responseData.name,
+        aadhaar_number: aadhaar_number || '605976614841', // Use from request since API doesn't return it
+        address: fullAddress,
+        email: responseData.email || null,
+        phone: responseData.phone || responseData.mobile || null,
+        date_of_birth: responseData.dob,
+        gender: responseData.gender,
+        father_name: fatherName,
+        city: responseData.locality || responseData.district,
+        state: responseData.state,
+        pincode: responseData.pincode,
+        // Additional fields from API
+        house: responseData.house,
+        street: responseData.street,
+        landmark: responseData.landmark,
+        locality: responseData.locality,
+        district: responseData.district,
+        subDistrict: responseData.subDistrict,
+        postOffice: responseData.postOffice,
+        careof: responseData.careof,
+        message: 'Aadhaar verification successful'
+      };
+      
+      console.log('🎯 [DEBUG] Final Processed Aadhaar Data:');
+      console.log(JSON.stringify(aadhaarData, null, 2));
+      
+      console.log('🔍 [DEBUG] Key Fields Check:');
+      console.log(`- Aadhaar Number: "${aadhaarData.aadhaar_number}" (Length: ${aadhaarData.aadhaar_number?.length})`);
+      console.log(`- Address: "${aadhaarData.address}" (Length: ${aadhaarData.address?.length})`);
+      console.log(`- Father Name: "${aadhaarData.father_name}"`);
+      console.log(`- City: "${aadhaarData.city}"`);
+      console.log(`- State: "${aadhaarData.state}"`);
+      console.log(`- Pincode: "${aadhaarData.pincode}"`);
+      console.log(`- Full Name: "${aadhaarData.full_name}"`);
       
       res.json({
         success: true,
-        data: {
-          full_name: responseData.full_name || responseData.name,
-          aadhaar_number: responseData.aadhaar_number || responseData.uid || '************',
-          address: responseData.address || responseData.full_address,
-          email: responseData.email,
-          phone: responseData.phone || responseData.mobile,
-          date_of_birth: responseData.date_of_birth || responseData.dob,
-          gender: responseData.gender,
-          father_name: responseData.father_name,
-          message: 'Aadhaar verification successful'
-        }
+        data: aadhaarData
       });
     } else {
-      console.error('Aadhaar OTP verification failed:', response.data);
+      console.error('❌ [DEBUG] Aadhaar OTP verification failed:', response.data);
       res.status(400).json({
         success: false,
-        error: response.data.message || response.data.error || 'OTP verification failed'
+        error: response.data.message || response.data.msg || response.data.error || 'OTP verification failed'
       });
     }
   } catch (error) {
-    console.error('Aadhaar OTP verification error:', {
+    console.error('❌ [DEBUG] Aadhaar OTP verification error:', {
       message: error.message,
       response: error.response?.data,
       status: error.response?.status

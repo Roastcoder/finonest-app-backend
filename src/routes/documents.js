@@ -7,6 +7,7 @@ import {
   deleteDocument, 
   downloadDocument, 
   getDocumentsByLead,
+  downloadMultipleDocuments,
   uploadMiddleware 
 } from '../controllers/documentController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
@@ -28,6 +29,9 @@ router.get('/debug/:id', (req, res) => {
 router.get('/:id/download', downloadDocument); // Public access for document download
 router.get('/:id/preview', downloadDocument); // Public access for document preview
 router.get('/:id/view', downloadDocument); // Alternative public access route
+
+// Bulk download route for mobile sharing
+router.post('/bulk-download', downloadMultipleDocuments); // Public access for bulk download
 
 // Authenticated routes for document management
 router.get('/', authenticate, getAllDocuments);

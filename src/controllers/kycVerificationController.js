@@ -99,31 +99,63 @@ export const saveAadhaarData = async (req, res) => {
       });
     }
     
-    // Update user with Aadhaar data
+    console.log('💾 [DEBUG] Saving Aadhaar data for user:', user_id);
+    console.log('📊 [DEBUG] Aadhaar data received:', JSON.stringify(aadhaar_data, null, 2));
+    
+    // Update user with comprehensive Aadhaar data
     await db.query(`
       UPDATE users SET 
-        aadhaar_data = $1,
+        aadhaar_number = COALESCE($1, aadhaar_number),
+        aadhaar_data = $2,
         aadhaar_verified = true,
-        father_name = $2,
-        updated_at = $3
-      WHERE id = $4
+        full_name = COALESCE($3, full_name),
+        father_name = COALESCE($4, father_name),
+        address_line1 = COALESCE($5, address_line1),
+        city = COALESCE($6, city),
+        state = COALESCE($7, state),
+        pincode = COALESCE($8, pincode),
+        gender = COALESCE($9, gender),
+        date_of_birth = COALESCE($10, date_of_birth),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $11
     `, [
+      aadhaar_data.aadhaar_number || null,
       JSON.stringify(aadhaar_data),
+      aadhaar_data.full_name || aadhaar_data.name || null,
       aadhaar_data.father_name || null,
-      new Date(),
+      aadhaar_data.address || null,
+      aadhaar_data.city || aadhaar_data.locality || aadhaar_data.district || null,
+      aadhaar_data.state || null,
+      aadhaar_data.pincode || null,
+      aadhaar_data.gender || null,
+      aadhaar_data.date_of_birth ? new Date(aadhaar_data.date_of_birth) : null,
       user_id
     ]);
     
+    console.log('✅ [DEBUG] Aadhaar data saved successfully for user:', user_id);
+    
+    // Fetch updated user data to return
+    const result = await db.query(`
+      SELECT 
+        id, user_id, full_name, aadhaar_number, aadhaar_verified,
+        address_line1, city, state, pincode, father_name, gender, date_of_birth
+      FROM users 
+      WHERE id = $1
+    `, [user_id]);
+    
+    console.log('📊 [DEBUG] Updated user data:', JSON.stringify(result.rows[0], null, 2));
+    
     res.json({
       success: true,
-      message: 'Aadhaar data saved successfully'
+      message: 'Aadhaar data saved successfully',
+      user: result.rows[0] || null
     });
     
   } catch (error) {
-    console.error('Save Aadhaar data error:', error);
+    console.error('❌ [DEBUG] Save Aadhaar data error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to save Aadhaar data'
+      error: 'Failed to save Aadhaar data: ' + error.message
     });
   }
 };

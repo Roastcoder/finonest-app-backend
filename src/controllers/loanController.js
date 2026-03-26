@@ -44,7 +44,10 @@ export const getAllLoans = async (req, res) => {
              l.banker_mobile,
              l.stage_changed_at,
              l.stage_data,
-             l.stage_history
+             l.stage_history,
+             l.link_loan_checked,
+             l.link_loan_tag,
+             l.link_loan_data
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id
@@ -145,7 +148,10 @@ export const getLoanById = async (req, res) => {
              l.stage_history,
              l.rejection_remarks,
              l.cancellation_remarks,
-             l.remark
+             l.remark,
+             l.link_loan_checked,
+             l.link_loan_tag,
+             l.link_loan_data
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id
@@ -631,6 +637,18 @@ export const updateLoanStage = async (req, res) => {
     // Validate required fields
     if (!stageData.stage) {
       return res.status(400).json({ error: 'Stage is required' });
+    }
+
+    // DISBURSED: enforce link_loan_checked
+    if (stageData.stage === 'DISBURSED') {
+      const loanCheck = await db.query('SELECT link_loan_checked FROM loans WHERE id = $1', [loanId]);
+      const llc = loanCheck.rows[0]?.link_loan_checked;
+      if (!llc || !['Yes', 'No'].includes(llc)) {
+        return res.status(400).json({
+          error: 'Link Loan Checked (Yes/No) is mandatory before marking a case as Disbursed.',
+          code: 'LINK_LOAN_CHECK_REQUIRED'
+        });
+      }
     }
     
     // Get current loan data

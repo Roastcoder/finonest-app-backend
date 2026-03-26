@@ -1,0 +1,365 @@
+import axios from 'axios';
+import db from '../config/database.js';
+
+const EXPERIAN_URL = `${process.env.KYC_BASE_URL}/core-svc/api/v2/exp/experian-credit-report`;
+const CACHE_DAYS = 90;
+const ALLOWED_ROLES = ['admin', 'sales_manager', 'branch_manager'];
+
+// Ensure tables exist
+const ensureTables = async () => {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS experian_credit_cache (
+      id SERIAL PRIMARY KEY,
+      rc_number VARCHAR(20) UNIQUE NOT NULL,
+      mobile VARCHAR(15),
+      first_name VARCHAR(100),
+      last_name VARCHAR(100),
+      credit_data JSONB NOT NULL,
+      fetched_at TIMESTAMP DEFAULT NOW(),
+      fetched_by INTEGER
+    )
+  `);
+  await db.query(`ALTER TABLE experian_credit_cache ALTER COLUMN mobile DROP NOT NULL`).catch(() => {});
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS link_loan_audit (
+      id SERIAL PRIMARY KEY,
+      rc_number VARCHAR(20),
+      action VARCHAR(50),
+      performed_by INTEGER,
+      details JSONB,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await db.query(`ALTER TABLE loans ADD COLUMN IF NOT EXISTS link_loan_checked VARCHAR(10) DEFAULT NULL`);
+  await db.query(`ALTER TABLE loans ADD COLUMN IF NOT EXISTS link_loan_tag VARCHAR(50) DEFAULT NULL`);
+  await db.query(`ALTER TABLE loans ADD COLUMN IF NOT EXISTS link_loan_data JSONB DEFAULT NULL`);
+  await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS link_loan_checked VARCHAR(10) DEFAULT NULL`);
+  await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS link_loan_tag VARCHAR(50) DEFAULT NULL`);
+  await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS link_loan_data JSONB DEFAULT NULL`);
+};
+ensureTables().catch(console.error);
+
+// Call Experian API — field names exactly as per curl spec
+async function callExperianAPI(mobile_no, first_name, last_name) {
+  const response = await axios.post(
+    EXPERIAN_URL,
+    { mobile_no, first_name, last_name },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'client-user-id': process.env.KYC_CLIENT_USER_ID,
+        'secret-key': process.env.KYC_SECRET_KEY,
+        'access-key': process.env.KYC_ACCESS_KEY,
+      },
+      timeout: 30000,
+    }
+  );
+  return response.data;
+}
+
+// RC Lookup — DB only, no external RC API call
+export const rcLookup = async (req, res) => {
+  try {
+    if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+
+    const { rc_number } = req.body;
+    if (!rc_number) return res.status(400).json({ error: 'RC number is required' });
+
+    const rcUpper = rc_number.toUpperCase().trim();
+    const rcStripped = rcUpper.replace(/\s/g, '');
+
+    const cached = await db.query('SELECT rc_data FROM rc_cache WHERE rc_number = $1', [rcUpper]);
+    if (cached.rows.length === 0) {
+      return res.status(404).json({ error: 'Vehicle not found in database. Please run RC Verification first.' });
+    }
+
+    const rc = cached.rows[0].rc_data;
+    const ownerName = rc.owner_name || '';
+    const nameParts = ownerName.trim().split(/\s+/).filter(Boolean);
+    let first_name = nameParts[0] || '';
+    let last_name = nameParts.slice(1).join(' ') || '';
+    let mobile = rc.mobile_number || '';
+
+    // Fallback mobile from leads/loans
+    if (!mobile) {
+      const r = await db.query(
+        `SELECT phone FROM leads WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND phone IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [rcStripped]
+      );
+      if (r.rows.length > 0) mobile = r.rows[0].phone;
+    }
+    if (!mobile) {
+      const r = await db.query(
+        `SELECT mobile FROM loans WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND mobile IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [rcStripped]
+      );
+      if (r.rows.length > 0) mobile = r.rows[0].mobile;
+    }
+
+    // Fallback name from leads/loans
+    if (!first_name) {
+      const r = await db.query(
+        `SELECT customer_name FROM leads WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND customer_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [rcStripped]
+      );
+      if (r.rows.length > 0) {
+        const p = (r.rows[0].customer_name || '').trim().split(/\s+/).filter(Boolean);
+        first_name = p[0] || ''; last_name = p.slice(1).join(' ') || '';
+      }
+    }
+    if (!first_name) {
+      const r = await db.query(
+        `SELECT applicant_name FROM loans WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND applicant_name IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [rcStripped]
+      );
+      if (r.rows.length > 0) {
+        const p = (r.rows[0].applicant_name || '').trim().split(/\s+/).filter(Boolean);
+        first_name = p[0] || ''; last_name = p.slice(1).join(' ') || '';
+      }
+    }
+
+    await db.query(
+      'INSERT INTO link_loan_audit (rc_number, action, performed_by, details) VALUES ($1,$2,$3,$4)',
+      [rcUpper, 'RC_LOOKUP', req.user.id, JSON.stringify({ rc_number: rcUpper })]
+    ).catch(() => {});
+
+    res.json({
+      rc_number: rcUpper,
+      first_name,
+      last_name,
+      mobile,
+      maker_name: rc.maker_description || '',
+      model_name: rc.maker_model || '',
+      finance_status: rc.finance_status || (rc.financer ? 'Active' : 'Not Financed'),
+      financer: rc.financer || '',
+      owner_name: ownerName || `${first_name} ${last_name}`.trim(),
+      mobile_missing: !mobile,
+      name_missing: !first_name,
+    });
+  } catch (error) {
+    console.error('RC lookup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Credit Report — 90-day cache, exact curl field names
+export const getCreditReport = async (req, res) => {
+  try {
+    if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+
+    const { mobile, first_name, last_name, rc_number, force_refresh } = req.body;
+
+    if (!first_name || !first_name.trim()) {
+      return res.status(400).json({ error: 'Customer first name is required' });
+    }
+    if (force_refresh && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only Admin can repull fresh credit data' });
+    }
+
+    const rcUpper = (rc_number || '').toUpperCase().trim();
+
+    // Check 90-day cache
+    if (!force_refresh) {
+      const cached = await db.query(
+        `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE rc_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`,
+        [rcUpper]
+      );
+      if (cached.rows.length > 0) {
+        const ageDays = Math.floor((Date.now() - new Date(cached.rows[0].fetched_at).getTime()) / 86400000);
+        return res.json({
+          from_cache: true,
+          cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
+          auto_loans: extractAutoLoans(cached.rows[0].credit_data),
+        });
+      }
+    }
+
+    // Call Experian with exact curl field names: mobile_no, first_name, last_name
+    let creditData;
+    try {
+      creditData = await callExperianAPI(
+        (mobile || '').trim(),
+        first_name.trim(),
+        (last_name || '').trim()
+      );
+    } catch (err) {
+      console.error('Experian API error:', err.response?.status, JSON.stringify(err.response?.data));
+      return res.status(502).json({
+        error: `Credit bureau API failed (${err.response?.status || err.code}): ${err.response?.data?.message || err.message}`,
+      });
+    }
+
+    // Cache result
+    await db.query(
+      `INSERT INTO experian_credit_cache (rc_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+       VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+       ON CONFLICT (rc_number) DO UPDATE SET credit_data=$5, fetched_at=NOW(), fetched_by=$6`,
+      [rcUpper, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
+    );
+
+    await db.query(
+      'INSERT INTO link_loan_audit (rc_number, action, performed_by, details) VALUES ($1,$2,$3,$4)',
+      [rcUpper, force_refresh ? 'CREDIT_REPULL' : 'CREDIT_FETCH', req.user.id, JSON.stringify({ mobile, first_name })]
+    ).catch(() => {});
+
+    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData) });
+  } catch (error) {
+    console.error('Credit report error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Tag lead as LINK LOAN EXIST
+export const tagLead = async (req, res) => {
+  try {
+    if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+
+    const { rc_number, lender, link_loans } = req.body;
+    if (!rc_number) return res.status(400).json({ error: 'rc_number is required' });
+
+    const rcUpper = rc_number.toUpperCase().trim();
+    const rcStripped = rcUpper.replace(/\s/g, '');
+    const tagData = { lender, link_loans, tagged_at: new Date().toISOString(), tagged_by: req.user.id };
+
+    const leadR = await db.query(
+      `SELECT id FROM leads WHERE UPPER(REPLACE(vehicle_number,' ',''))=$1 ORDER BY created_at DESC LIMIT 1`,
+      [rcStripped]
+    );
+    const loanR = await db.query(
+      `SELECT id FROM loans WHERE UPPER(REPLACE(vehicle_number,' ',''))=$1 ORDER BY created_at DESC LIMIT 1`,
+      [rcStripped]
+    );
+
+    if (leadR.rows.length > 0)
+      await db.query(`UPDATE leads SET link_loan_tag='LINK LOAN EXIST', link_loan_data=$1 WHERE id=$2`, [JSON.stringify(tagData), leadR.rows[0].id]);
+    if (loanR.rows.length > 0)
+      await db.query(`UPDATE loans SET link_loan_tag='LINK LOAN EXIST', link_loan_data=$1 WHERE id=$2`, [JSON.stringify(tagData), loanR.rows[0].id]);
+
+    await db.query('INSERT INTO link_loan_audit (rc_number,action,performed_by,details) VALUES ($1,$2,$3,$4)',
+      [rcUpper, 'TAG_LINK_LOAN', req.user.id, JSON.stringify(tagData)]).catch(() => {});
+
+    res.json({ success: true, message: 'Lead tagged as LINK LOAN EXIST' });
+  } catch (error) {
+    console.error('Tag lead error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Update link_loan_checked on a loan
+export const updateLinkLoanChecked = async (req, res) => {
+  try {
+    const { loan_id, checked } = req.body;
+    if (!loan_id || !checked) return res.status(400).json({ error: 'loan_id and checked (Yes/No) are required' });
+    if (!['Yes', 'No'].includes(checked)) return res.status(400).json({ error: 'checked must be Yes or No' });
+
+    await db.query(`UPDATE loans SET link_loan_checked=$1, updated_at=NOW() WHERE id=$2`, [checked, loan_id]);
+    await db.query('INSERT INTO link_loan_audit (rc_number,action,performed_by,details) VALUES ($1,$2,$3,$4)',
+      ['N/A', 'LINK_LOAN_CHECKED', req.user.id, JSON.stringify({ loan_id, checked })]).catch(() => {});
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Auto-trigger on APPROVED stage
+export const autoCheckForLoan = async (req, res) => {
+  try {
+    if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
+
+    const { loan_id } = req.params;
+    const loanR = await db.query('SELECT vehicle_number, mobile, applicant_name FROM loans WHERE id=$1', [loan_id]);
+    if (loanR.rows.length === 0) return res.status(404).json({ error: 'Loan not found' });
+
+    const loan = loanR.rows[0];
+    if (!loan.vehicle_number) return res.json({ skipped: true, reason: 'No vehicle number on loan' });
+
+    const rcUpper = loan.vehicle_number.toUpperCase().trim();
+    const rcR = await db.query('SELECT rc_data FROM rc_cache WHERE rc_number=$1', [rcUpper]);
+    if (rcR.rows.length === 0) return res.json({ skipped: true, reason: 'RC not in cache' });
+
+    const rc = rcR.rows[0].rc_data;
+    if (!rc.financer && (!rc.finance_status || rc.finance_status === 'Not Financed'))
+      return res.json({ skipped: true, reason: 'Vehicle not financed' });
+
+    const ownerName = rc.owner_name || loan.applicant_name || '';
+    const parts = ownerName.trim().split(/\s+/).filter(Boolean);
+    const first_name = parts[0] || '';
+    const last_name = parts.slice(1).join(' ') || '';
+    const mobile = rc.mobile_number || loan.mobile || '';
+
+    if (!first_name) return res.json({ skipped: true, reason: 'No customer name available' });
+
+    // Check cache first
+    const cacheR = await db.query(
+      `SELECT credit_data FROM experian_credit_cache WHERE rc_number=$1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`,
+      [rcUpper]
+    );
+
+    let creditData, fromCache = false;
+    if (cacheR.rows.length > 0) {
+      creditData = cacheR.rows[0].credit_data;
+      fromCache = true;
+    } else {
+      try {
+        creditData = await callExperianAPI(mobile, first_name, last_name);
+        await db.query(
+          `INSERT INTO experian_credit_cache (rc_number,mobile,first_name,last_name,credit_data,fetched_at,fetched_by)
+           VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+           ON CONFLICT (rc_number) DO UPDATE SET credit_data=$5, fetched_at=NOW(), fetched_by=$6`,
+          [rcUpper, mobile, first_name, last_name, JSON.stringify(creditData), req.user.id]
+        );
+      } catch (err) {
+        console.error('Auto-check Experian error:', err.response?.status, err.message);
+        return res.json({ skipped: true, reason: 'Credit API unavailable' });
+      }
+    }
+
+    res.json({ success: true, from_cache: fromCache, auto_loans: extractAutoLoans(creditData), vehicle_financed: true });
+  } catch (error) {
+    console.error('Auto check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Extract active loans from Experian response
+// Response path: data.result.CAIS_Account.CAIS_Account_DETAILS
+// Account_Status "11" = Active
+function extractAutoLoans(creditData) {
+  try {
+    const accounts =
+      creditData?.data?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
+      creditData?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
+      [];
+
+    const arr = Array.isArray(accounts) ? accounts : [accounts];
+    const TYPE_LABELS = {
+      '01': 'Home Loan', '02': 'Home Loan', '05': 'Personal Loan',
+      '06': 'Home Loan', '07': 'Credit Card', '08': 'Auto Loan',
+      '10': 'Auto Loan', '13': 'Two Wheeler Loan', '35': 'Business Loan', '69': 'Overdraft'
+    };
+
+    return arr
+      .filter(acc => acc && String(acc.Account_Status || '').trim() === '11')
+      .map(acc => ({
+        account_number: acc.Account_Number || '',
+        subscriber_name: acc.Subscriber_Name || '',
+        account_type: TYPE_LABELS[String(acc.Account_Type || '').trim()] || `Loan (${acc.Account_Type})`,
+        account_type_code: String(acc.Account_Type || '').trim(),
+        sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
+        current_balance: Number(acc.Current_Balance || 0),
+        open_date: fmtDate(acc.Open_Date),
+        account_holder_type: acc.AccountHoldertypeCode === '1' ? 'Individual' : (acc.AccountHoldertypeCode || ''),
+        account_status: 'Active',
+        date_reported: fmtDate(acc.Date_Reported),
+      }));
+  } catch (e) {
+    console.error('extractAutoLoans error:', e);
+    return [];
+  }
+}
+
+function fmtDate(raw) {
+  if (!raw || String(raw).length !== 8) return raw || '';
+  return `${raw.slice(6, 8)}/${raw.slice(4, 6)}/${raw.slice(0, 4)}`;
+}

@@ -170,6 +170,7 @@ export const getCreditReport = async (req, res) => {
           from_cache: true,
           cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
           auto_loans: extractAutoLoans(cached.rows[0].credit_data),
+          credit_score: extractCreditScore(cached.rows[0].credit_data),
         });
       }
     }
@@ -202,7 +203,7 @@ export const getCreditReport = async (req, res) => {
       [rcUpper, force_refresh ? 'CREDIT_REPULL' : 'CREDIT_FETCH', req.user.id, JSON.stringify({ mobile, first_name })]
     ).catch(() => {});
 
-    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData) });
+    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData), credit_score: extractCreditScore(creditData) });
   } catch (error) {
     console.error('Credit report error:', error);
     res.status(500).json({ error: error.message });
@@ -315,7 +316,7 @@ export const autoCheckForLoan = async (req, res) => {
       }
     }
 
-    res.json({ success: true, from_cache: fromCache, auto_loans: extractAutoLoans(creditData), vehicle_financed: true });
+    res.json({ success: true, from_cache: fromCache, auto_loans: extractAutoLoans(creditData), credit_score: extractCreditScore(creditData), vehicle_financed: true });
   } catch (error) {
     console.error('Auto check error:', error);
     res.status(500).json({ error: error.message });
@@ -325,6 +326,40 @@ export const autoCheckForLoan = async (req, res) => {
 // Extract active loans from Experian response
 // Response path: data.result.CAIS_Account.CAIS_Account_DETAILS
 // Account_Status "11" = Active
+const ALLOWED_ACCOUNT_TYPES = new Set([
+  '1','5','6','9','11','12','13','16','17','32','33','34',
+  '45','46','47','51','52','53','54','55','56','57','58',
+  '59','61','69','71','00'
+]);
+
+const ACCOUNT_TYPE_NAMES = {
+  '1':'AUTO LOAN','5':'PERSONAL LOAN','6':'CONSUMER LOAN','9':'LOAN TO PROFESSIONAL',
+  '11':'LEASING','12':'OVERDRAFT','13':'TWO-WHEELER LOAN','16':'FLEET CARD',
+  '17':'Commercial Vehicle Loan','32':'Used Car Loan','33':'Construction Equipment Loan',
+  '34':'Tractor Loan','45':'P2P Personal Loan','46':'P2P Auto Loan','47':'P2P Education Loan',
+  '51':'BUSINESS LOAN - GENERAL','52':'BUSINESS LOAN - PRIORITY SECTOR - SMALL BUSINESS',
+  '53':'BUSINESS LOAN - PRIORITY SECTOR - AGRICULTURE','54':'BUSINESS LOAN - PRIORITY SECTOR - OTHERS',
+  '55':'BUSINESS NON-FUNDED CREDIT FACILITY - GENERAL',
+  '56':'BUSINESS NON-FUNDED CREDIT FACILITY - PRIORITY SECTOR - SMALL BUSINESS',
+  '57':'BUSINESS NON-FUNDED CREDIT FACILITY - PRIORITY SECTOR - AGRICULTURE',
+  '58':'BUSINESS NON-FUNDED CREDIT FACILITY - PRIORITY SECTOR - OTHERS',
+  '59':'BUSINESS LOANS AGAINST BANK DEPOSITS','61':'Business Loan - Unsecured',
+  '69':'Short Term Personal Loan [Unsecured]','71':'Temporary Overdraft [Unsecured]','00':'Others'
+};
+
+function extractCreditScore(creditData) {
+  try {
+    const score =
+      creditData?.data?.result?.SCORE?.BureauScore ||
+      creditData?.result?.SCORE?.BureauScore ||
+      creditData?.data?.result?.SCORE?.score ||
+      creditData?.result?.SCORE?.score ||
+      null;
+    const n = Number(score);
+    return (!isNaN(n) && n > 0) ? n : null;
+  } catch { return null; }
+}
+
 function extractAutoLoans(creditData) {
   try {
     const accounts =
@@ -333,26 +368,38 @@ function extractAutoLoans(creditData) {
       [];
 
     const arr = Array.isArray(accounts) ? accounts : [accounts];
-    const TYPE_LABELS = {
-      '01': 'Home Loan', '02': 'Home Loan', '05': 'Personal Loan',
-      '06': 'Home Loan', '07': 'Credit Card', '08': 'Auto Loan',
-      '10': 'Auto Loan', '13': 'Two Wheeler Loan', '35': 'Business Loan', '69': 'Overdraft'
-    };
 
-    return arr
-      .filter(acc => acc && String(acc.Account_Status || '').trim() === '11')
-      .map(acc => ({
-        account_number: acc.Account_Number || '',
-        subscriber_name: acc.Subscriber_Name || '',
-        account_type: TYPE_LABELS[String(acc.Account_Type || '').trim()] || `Loan (${acc.Account_Type})`,
-        account_type_code: String(acc.Account_Type || '').trim(),
-        sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
-        current_balance: Number(acc.Current_Balance || 0),
-        open_date: fmtDate(acc.Open_Date),
-        account_holder_type: acc.AccountHoldertypeCode === '1' ? 'Individual' : (acc.AccountHoldertypeCode || ''),
-        account_status: 'Active',
-        date_reported: fmtDate(acc.Date_Reported),
-      }));
+    const activeArr = arr.filter(acc => acc && String(acc.Account_Status || '').trim() === '11');
+
+    // Find AUTO LOAN (type 1) accounts — these are the primary vehicle loans
+    const autoLoans = activeArr.filter(acc => {
+      const code = String(acc.Account_Type || '').trim().replace(/^0+/, '');
+      return code === '1';
+    });
+
+    // Get unique banks that have an AUTO LOAN
+    const autoLoanBanks = new Set(autoLoans.map(acc => (acc.Subscriber_Name || '').toLowerCase().trim()));
+
+    // From those same banks, find all other active loans of the allowed types
+    const linkLoans = activeArr.filter(acc => {
+      const bank = (acc.Subscriber_Name || '').toLowerCase().trim();
+      if (!autoLoanBanks.has(bank)) return false;
+      const code = String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00';
+      return ALLOWED_ACCOUNT_TYPES.has(code);
+    });
+
+    return linkLoans.map(acc => ({
+      account_number: acc.Account_Number || '',
+      subscriber_name: acc.Subscriber_Name || '',
+      account_type: ACCOUNT_TYPE_NAMES[String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00'] || acc.Account_Type || '',
+      account_type_code: String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00',
+      sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
+      current_balance: Number(acc.Current_Balance || 0),
+      open_date: fmtDate(acc.Open_Date),
+      account_holder_type: acc.AccountHoldertypeCode === '1' ? 'Individual' : (acc.AccountHoldertypeCode || ''),
+      account_status: 'Active',
+      date_reported: fmtDate(acc.Date_Reported),
+    }));
   } catch (e) {
     console.error('extractAutoLoans error:', e);
     return [];

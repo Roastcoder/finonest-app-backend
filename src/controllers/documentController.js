@@ -297,3 +297,77 @@ export const getDocumentsByLead = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+// Bulk download multiple documents for mobile sharing
+export const downloadMultipleDocuments = async (req, res) => {
+  try {
+    const { documentIds } = req.body;
+    
+    if (!documentIds || !Array.isArray(documentIds) || documentIds.length === 0) {
+      return res.status(400).json({ error: 'Document IDs array is required' });
+    }
+
+    // Get document information
+    const placeholders = documentIds.map((_, index) => `$${index + 1}`).join(',');
+    const result = await db.query(
+      `SELECT id, file_path, file_name, document_type FROM documents WHERE id IN (${placeholders})`,
+      documentIds
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No documents found' });
+    }
+
+    // For single document, return it directly
+    if (result.rows.length === 1) {
+      const doc = result.rows[0];
+      const normalizedFilePath = doc.file_path.replace(/\\/g, '/');
+      const fileNameInStorage = normalizedFilePath.split('/').pop();
+      let resolvedPath = path.join(process.cwd(), 'uploads', 'documents', fileNameInStorage);
+      
+      if (!fs.existsSync(resolvedPath)) {
+        const fallback = path.isAbsolute(normalizedFilePath) ? normalizedFilePath : path.join(process.cwd(), normalizedFilePath);
+        if (fs.existsSync(fallback)) resolvedPath = fallback;
+      }
+
+      if (!fs.existsSync(resolvedPath)) {
+        return res.status(404).json({ error: 'File not found on server' });
+      }
+
+      const ext = path.extname(doc.file_name).toLowerCase();
+      let contentType = 'application/octet-stream';
+      
+      switch (ext) {
+        case '.pdf': contentType = 'application/pdf'; break;
+        case '.jpg':
+        case '.jpeg': contentType = 'image/jpeg'; break;
+        case '.png': contentType = 'image/png'; break;
+      }
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${doc.file_name}"`);
+      
+      const fileStream = fs.createReadStream(resolvedPath);
+      return fileStream.pipe(res);
+    }
+
+    // For multiple documents, create a simple JSON response with file info
+    // In a real implementation, you might want to create a ZIP file
+    const documentInfo = result.rows.map(doc => ({
+      id: doc.id,
+      fileName: doc.file_name,
+      documentType: doc.document_type,
+      downloadUrl: `/api/documents/${doc.id}/download`
+    }));
+
+    res.json({
+      message: `Found ${result.rows.length} documents`,
+      documents: documentInfo,
+      bulkDownloadNote: 'Use individual download URLs for each document'
+    });
+    
+  } catch (error) {
+    console.error('Bulk download error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};

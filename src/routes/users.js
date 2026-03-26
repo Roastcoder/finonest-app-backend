@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllUsers, getUserById, createUser, updateUser, deleteUser, searchUser, getTeamMembers, getHierarchyTree, getManagerTeamHierarchy, getUsersByRole, approveUser, rejectUser, updateExistingUsersStatus, generateReferCodes } from '../controllers/userController.js';
+import { getAllUsers, getUserById, createUser, updateUser, deleteUser, searchUser, getTeamMembers, getHierarchyTree, getManagerTeamHierarchy, getUsersByRole, approveUser, rejectUser, updateExistingUsersStatus, generateReferCodes, getMyTeam } from '../controllers/userController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 
@@ -10,6 +10,7 @@ router.use(authenticate);
 router.get('/hierarchy', authorize('admin', 'operation_team', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getHierarchyTree);
 router.get('/by-role', authorize('admin', 'operation_team'), getUsersByRole);
 router.get('/my-team/hierarchy', authorize('operation_team', 'sales_manager', 'branch_manager', 'dsa'), getManagerTeamHierarchy);
+router.get('/my-team', authorize('branch_manager'), getMyTeam);
 router.get('/', authorize('admin', 'operation_team', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getAllUsers);
 router.get('/search', authorize('admin', 'operation_team', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), searchUser);
 router.get('/team/:leaderId', authorize('admin', 'operation_team', 'sales_manager', 'branch_manager', 'dsa', 'team_leader'), getTeamMembers);

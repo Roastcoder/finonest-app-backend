@@ -1,6 +1,7 @@
 import express from 'express';
-import { verifyPan, sendAadhaarOtp, verifyAadhaarOtp } from '../controllers/kycController.js';
+import { verifyPan, sendAadhaarOtp, verifyAadhaarOtp, verifyAadhaar } from '../controllers/kycController.js';
 import { verifyAndSavePan, saveAadhaarData } from '../controllers/kycVerificationController.js';
+import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -20,12 +21,13 @@ router.get('/test', (req, res) => {
 });
 
 // PAN verification endpoints
-router.post('/verify-pan', verifyPan);
-router.post('/verify-and-save-pan', verifyAndSavePan);
+router.post('/verify-pan', authenticate, verifyPan);
+router.post('/verify-and-save-pan', authenticate, verifyAndSavePan);
 
 // Aadhaar verification endpoints
-router.post('/send-aadhaar-otp', sendAadhaarOtp);
-router.post('/verify-aadhaar-otp', verifyAadhaarOtp);
-router.post('/save-aadhaar-data', saveAadhaarData);
+router.post('/send-aadhaar-otp', authenticate, sendAadhaarOtp);
+router.post('/verify-aadhaar-otp', authenticate, verifyAadhaarOtp);
+router.post('/verify-aadhaar', authenticate, verifyAadhaar);
+router.post('/save-aadhaar-data', authenticate, saveAadhaarData);
 
 export default router;

@@ -5,6 +5,9 @@ const SUREPASS_TOKEN = process.env.SUREPASS_TOKEN || 'eyJhbGciOiJIUzI1NiIsInR5cC
 
 export const verifyPanComprehensive = async (panNumber) => {
   try {
+    console.log('🔍 Making SurePass API call for PAN:', panNumber);
+    console.log('🔑 Using token:', SUREPASS_TOKEN ? `${SUREPASS_TOKEN.substring(0, 20)}...` : 'NOT SET');
+    
     const response = await axios.post(
       `${SUREPASS_BASE_URL}/pan/pan-comprehensive`,
       {
@@ -19,6 +22,13 @@ export const verifyPanComprehensive = async (panNumber) => {
       }
     );
 
+    console.log('✅ SurePass API Response:', {
+      success: response.data.success,
+      status_code: response.data.status_code,
+      message: response.data.message,
+      data: response.data.data ? 'Data received' : 'No data'
+    });
+
     return {
       success: response.data.success,
       data: response.data.data,
@@ -26,7 +36,11 @@ export const verifyPanComprehensive = async (panNumber) => {
       message: response.data.message
     };
   } catch (error) {
-    console.error('SurePass PAN API Error:', error.response?.data || error.message);
+    console.error('❌ SurePass PAN API Error:', {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    });
     throw error;
   }
 };

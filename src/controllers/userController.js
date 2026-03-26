@@ -658,6 +658,29 @@ export const updateExistingUsersStatus = async (req, res) => {
   }
 };
 
+export const getMyTeam = async (req, res) => {
+  try {
+    // Only branch managers can access this endpoint
+    if (req.user.role !== 'branch_manager') {
+      return res.status(403).json({ error: 'Only branch managers can access this endpoint' });
+    }
+
+    const result = await db.query(`
+      SELECT u.id, u.user_id, u.full_name, u.phone, u.role, u.branch_id, u.reporting_to, u.dsa_id, u.joining_date, u.created_at, u.status,
+             b.name as branch_name
+      FROM users u
+      LEFT JOIN branches b ON u.branch_id = b.id
+      WHERE u.reporting_to = $1
+      ORDER BY u.role DESC, u.full_name ASC
+    `, [req.user.id]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get my team error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const generateReferCodes = async (req, res) => {
   try {
     // Only admin can run this
@@ -732,5 +755,6 @@ export default {
   approveUser,
   rejectUser,
   updateExistingUsersStatus,
-  generateReferCodes
+  generateReferCodes,
+  getMyTeam
 };

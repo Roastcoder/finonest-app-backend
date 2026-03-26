@@ -444,6 +444,261 @@ export const updatePhone = async (req, res) => {
   }
 };
 
+// Add endpoint to get unmasked Aadhaar for authorized users
+export const getUnmaskedAadhaar = async (req, res) => {
+  try {
+    // Only allow admin or the user themselves to view unmasked Aadhaar
+    const targetUserId = req.params.userId || req.user.id;
+    
+    if (req.user.role !== 'admin' && req.user.id !== parseInt(targetUserId)) {
+      return res.status(403).json({ error: 'Unauthorized to view this data' });
+    }
+    
+    const result = await db.query(
+      'SELECT aadhaar_number FROM users WHERE id = $1',
+      [targetUserId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const aadhaarNumber = result.rows[0].aadhaar_number;
+    
+    // If it's masked, we can't unmask it
+    if (aadhaarNumber === '************') {
+      return res.json({ 
+        success: false, 
+        message: 'Aadhaar number is masked in database. Re-verification required.',
+        masked: true
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      aadhaar_number: aadhaarNumber,
+      masked: false
+    });
+    
+  } catch (error) {
+    console.error('Get unmasked Aadhaar error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Add endpoint to update existing user's Aadhaar data
+export const updateUserAadhaarData = async (req, res) => {
+  try {
+    const { aadhaar_data } = req.body;
+    const userId = req.user.id; // Get from authenticated user
+    
+    if (!aadhaar_data) {
+      return res.status(400).json({
+        success: false,
+        error: 'Aadhaar data is required'
+      });
+    }
+    
+    console.log('Updating Aadhaar data for user:', userId);
+    console.log('New Aadhaar data:', aadhaar_data);
+    
+    // Update user with comprehensive Aadhaar data
+    await db.query(`
+      UPDATE users SET 
+        aadhaar_number = $1,
+        aadhaar_data = $2,
+        aadhaar_verified = true,
+        full_name = COALESCE($3, full_name),
+        father_name = COALESCE($4, father_name),
+        address_line1 = COALESCE($5, address_line1),
+        city = COALESCE($6, city),
+        state = COALESCE($7, state),
+        pincode = COALESCE($8, pincode),
+        gender = COALESCE($9, gender),
+        date_of_birth = COALESCE($10, date_of_birth),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $11
+    `, [
+      aadhaar_data.aadhaar_number || null,
+      JSON.stringify(aadhaar_data),
+      aadhaar_data.full_name || aadhaar_data.name || null,
+      aadhaar_data.father_name || null,
+      aadhaar_data.address || null,
+      aadhaar_data.city || null,
+      aadhaar_data.state || null,
+      aadhaar_data.pincode || null,
+      aadhaar_data.gender || null,
+      aadhaar_data.date_of_birth ? new Date(aadhaar_data.date_of_birth) : null,
+      userId
+    ]);
+    
+    console.log('✅ Aadhaar data updated successfully for user:', userId);
+    
+    res.json({
+      success: true,
+      message: 'Aadhaar data updated successfully'
+    });
+    
+  } catch (error) {
+    console.error('Update Aadhaar data error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update Aadhaar data: ' + error.message
+    });
+  }
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    const {
+      full_name,
+      pan_number,
+      aadhaar_number,
+      pan_data,
+      aadhaar_data,
+      pan_verified,
+      aadhaar_verified,
+      date_of_birth,
+      gender,
+      father_name,
+      address_line1,
+      address_line2,
+      city,
+      state,
+      pincode,
+      country
+    } = req.body;
+
+    // Build update query dynamically
+    const updates = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (full_name !== undefined) {
+      updates.push(`full_name = $${paramCount}`, `name = $${paramCount}`);
+      values.push(full_name);
+      paramCount++;
+    }
+
+    if (pan_number !== undefined) {
+      updates.push(`pan_number = $${paramCount}`);
+      values.push(pan_number);
+      paramCount++;
+    }
+
+    if (aadhaar_number !== undefined) {
+      updates.push(`aadhaar_number = $${paramCount}`);
+      values.push(aadhaar_number);
+      paramCount++;
+    }
+
+    if (pan_data !== undefined) {
+      updates.push(`pan_data = $${paramCount}`);
+      values.push(typeof pan_data === 'object' ? JSON.stringify(pan_data) : pan_data);
+      paramCount++;
+    }
+
+    if (aadhaar_data !== undefined) {
+      updates.push(`aadhaar_data = $${paramCount}`);
+      values.push(typeof aadhaar_data === 'object' ? JSON.stringify(aadhaar_data) : aadhaar_data);
+      paramCount++;
+    }
+
+    if (pan_verified !== undefined) {
+      updates.push(`pan_verified = $${paramCount}`);
+      values.push(pan_verified);
+      paramCount++;
+    }
+
+    if (aadhaar_verified !== undefined) {
+      updates.push(`aadhaar_verified = $${paramCount}`);
+      values.push(aadhaar_verified);
+      paramCount++;
+    }
+
+    if (date_of_birth !== undefined) {
+      updates.push(`date_of_birth = $${paramCount}`);
+      values.push(date_of_birth);
+      paramCount++;
+    }
+
+    if (gender !== undefined) {
+      updates.push(`gender = $${paramCount}`);
+      values.push(gender);
+      paramCount++;
+    }
+
+    if (father_name !== undefined) {
+      updates.push(`father_name = $${paramCount}`);
+      values.push(father_name);
+      paramCount++;
+    }
+
+    if (address_line1 !== undefined) {
+      updates.push(`address_line1 = $${paramCount}`);
+      values.push(address_line1);
+      paramCount++;
+    }
+
+    if (address_line2 !== undefined) {
+      updates.push(`address_line2 = $${paramCount}`);
+      values.push(address_line2);
+      paramCount++;
+    }
+
+    if (city !== undefined) {
+      updates.push(`city = $${paramCount}`);
+      values.push(city);
+      paramCount++;
+    }
+
+    if (state !== undefined) {
+      updates.push(`state = $${paramCount}`);
+      values.push(state);
+      paramCount++;
+    }
+
+    if (pincode !== undefined) {
+      updates.push(`pincode = $${paramCount}`);
+      values.push(pincode);
+      paramCount++;
+    }
+
+    if (country !== undefined) {
+      updates.push(`country = $${paramCount}`);
+      values.push(country);
+      paramCount++;
+    }
+
+    // Always update the updated_at timestamp
+    updates.push(`updated_at = $${paramCount}`);
+    values.push(new Date());
+    paramCount++;
+
+    // Check if KYC is completed
+    if (pan_verified && aadhaar_verified) {
+      updates.push(`kyc_completed = $${paramCount}`);
+      values.push(true);
+      paramCount++;
+    }
+
+    if (updates.length === 1) { // Only updated_at
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    // Add user ID as the last parameter
+    values.push(req.user.id);
+
+    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount}`;
+    
+    await db.query(query, values);
+
+    res.json({ success: true, message: 'Profile updated successfully' });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
 export const getProfile = async (req, res) => {
   try {
     const result = await db.query(`
@@ -485,6 +740,36 @@ export const getProfile = async (req, res) => {
       console.error('Error parsing Aadhaar data:', e);
     }
     
+    // Enhanced Aadhaar data processing
+    let processedAadhaarData = null;
+    if (aadhaarData) {
+      processedAadhaarData = {
+        ...aadhaarData,
+        // Add address from various possible sources
+        address: aadhaarData.address || 
+                aadhaarData.care_of || 
+                aadhaarData.house || 
+                aadhaarData.street || 
+                aadhaarData.landmark || 
+                aadhaarData.locality || 
+                aadhaarData.vtc || 
+                aadhaarData.subdist || 
+                aadhaarData.dist || 
+                aadhaarData.state || 
+                null,
+        // Extract location details
+        city: aadhaarData.city || aadhaarData.vtc || aadhaarData.dist || null,
+        state: aadhaarData.state || null,
+        pincode: aadhaarData.pincode || aadhaarData.pin_code || null,
+        // Handle different date formats
+        date_of_birth: aadhaarData.date_of_birth || aadhaarData.dob || null,
+        // Handle name variations
+        name: aadhaarData.full_name || aadhaarData.name || null,
+        // Handle father name
+        father_name: aadhaarData.father_name || aadhaarData.care_of || null
+      };
+    }
+    
     res.json({
       id: user.id,
       user_id: user.user_id,
@@ -492,7 +777,6 @@ export const getProfile = async (req, res) => {
       full_name: user.full_name,
       phone: user.phone,
       role: user.role,
-      phone: user.phone,
       status: user.status,
       reporting_to: user.reporting_to,
       branch_id: user.branch_id,
@@ -512,24 +796,29 @@ export const getProfile = async (req, res) => {
         aadhaar_verified: user.aadhaar_verified,
         kyc_completed: user.kyc_completed,
         
-        // Personal Details
-        date_of_birth: user.date_of_birth,
-        gender: user.gender,
-        father_name: user.father_name,
+        // Personal Details - prioritize from KYC data, fallback to user table
+        date_of_birth: panData?.dob || processedAadhaarData?.date_of_birth || user.date_of_birth,
+        gender: panData?.gender || processedAadhaarData?.gender || user.gender,
+        father_name: processedAadhaarData?.father_name || user.father_name,
         
-        // Address Details
+        // Address Details - prioritize structured address, fallback to Aadhaar
         address: {
-          line1: user.address_line1,
+          line1: user.address_line1 || processedAadhaarData?.address,
           line2: user.address_line2,
-          city: user.city,
-          state: user.state,
-          pincode: user.pincode,
+          city: user.city || processedAadhaarData?.city,
+          state: user.state || processedAadhaarData?.state,
+          pincode: user.pincode || processedAadhaarData?.pincode,
           country: user.country
         },
         
+        // Enhanced location details
+        city: user.city || processedAadhaarData?.city,
+        state: user.state || processedAadhaarData?.state,
+        pincode: user.pincode || processedAadhaarData?.pincode,
+        
         // Raw KYC Data
         pan_details: panData,
-        aadhaar_details: aadhaarData
+        aadhaar_details: processedAadhaarData
       },
       photo_path: user.photo_path || null
     });

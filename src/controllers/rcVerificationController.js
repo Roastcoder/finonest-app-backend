@@ -22,6 +22,37 @@ const ensureRcCacheTable = async () => {
 };
 ensureRcCacheTable().catch(console.error);
 
+export const getRCData = async (req, res) => {
+  try {
+    const { rc_number } = req.params;
+
+    if (!rc_number) {
+      return res.status(400).json({ error: 'RC number is required' });
+    }
+
+    const rcNumberUpper = rc_number.toUpperCase();
+
+    // Fetch from cache
+    const cached = await db.query('SELECT rc_data FROM rc_cache WHERE rc_number = $1', [rcNumberUpper]);
+    
+    if (cached.rows.length === 0) {
+      return res.status(404).json({ error: 'RC data not found. Please verify RC first.' });
+    }
+
+    const rcData = typeof cached.rows[0].rc_data === 'string' 
+      ? JSON.parse(cached.rows[0].rc_data) 
+      : cached.rows[0].rc_data;
+
+    res.json({
+      success: true,
+      data: rcData
+    });
+  } catch (error) {
+    console.error('Get RC data error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const verifyRC = async (req, res) => {
   try {
     const { rc_number } = req.body;
@@ -107,6 +138,13 @@ export const verifyRC = async (req, res) => {
     const rc = rcData.data;
     let challanInfo = { status: 'No', count: 0, challans: [] };
 
+    // Log the raw RC data being saved
+    console.log('\n=== RAW RC DATA FROM API ===');
+    console.log('RC Number:', rc.rc_number);
+    console.log('All fields in response:', Object.keys(rc).sort());
+    console.log('Full RC object:', JSON.stringify(rc, null, 2));
+    console.log('===========================\n');
+
     // Fetch challan details
     try {
       const challanResponse = await fetch('https://kyc-api.surepass.io/api/v1/rc/rc-related/challan-details', {
@@ -139,21 +177,31 @@ export const verifyRC = async (req, res) => {
       console.error('Challan check failed:', challanError);
     }
 
-    // Save to DB cache
+    // Save to DB cache - storing the complete raw response
+    const rcDataToSave = JSON.stringify(rc);
+    console.log(`\n📊 Saving RC ${rcNumberUpper} to database...`);
+    console.log(`Data size: ${rcDataToSave.length} bytes`);
+    console.log(`API Type: ${apiType}`);
+    
     await db.query(
-      `INSERT INTO rc_cache (rc_number, rc_data, challan_data, api_type) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (rc_number) DO UPDATE SET rc_data = $2, challan_data = $3, api_type = $4`,
-      [rcNumberUpper, JSON.stringify(rcData.data), JSON.stringify(challanInfo), apiType]
+      `INSERT INTO rc_cache (rc_number, rc_data, challan_data, api_type, created_at) 
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (rc_number) DO UPDATE SET 
+         rc_data = $2, 
+         challan_data = $3, 
+         api_type = $4,
+         created_at = NOW()`,
+      [rcNumberUpper, rcDataToSave, JSON.stringify(challanInfo), apiType]
     );
 
-    console.log(`RC ${rcNumberUpper} saved to cache (${apiType})`);
+    console.log(`✅ RC ${rcNumberUpper} saved to cache (${apiType})\n`);
 
     res.json({
       success: true,
       from_cache: false,
       source: apiType,
       data: {
-        rc_details: rcData.data,
+        rc_details: rc,
         challan_info: challanInfo
       }
     });

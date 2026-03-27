@@ -4,9 +4,12 @@ import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Public endpoint - no authentication required
+router.get('/', getAllBanks);
+
+// Protected endpoints - authentication required
 router.use(authenticate);
 
-router.get('/', getAllBanks);
 router.get('/:id', getBankById);
 router.post('/', authorize('admin', 'manager'), upload.single('logo'), createBank);
 router.put('/:id', authorize('admin', 'manager'), upload.single('logo'), updateBank);

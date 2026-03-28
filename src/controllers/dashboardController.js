@@ -39,27 +39,37 @@ export const getDashboardStats = async (req, res) => {
       trackerParams = [monthStart];
     }
 
-    // 1. Bank wise login
+    // 1. Bank wise login (from loans table)
     const loginStats = await db.query(`
-      SELECT COALESCE(b.name, 'Unassigned') as "bankName", COUNT(l.id) as count
-      FROM leads l
-      LEFT JOIN banks b ON l.financier_id = b.id
-      WHERE l.stage IN ('login', 'approved', 'abnd', 'disbursed') ${dateFilter}
+      SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
 
-    // 2. Bank wise Disbursements
+    // 2. Bank wise Disbursements (from loans table)
     const disbursementBankWise = await db.query(`
-      SELECT COALESCE(b.name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount_required, 0)) as amount, COUNT(l.id) as units
-      FROM leads l
-      LEFT JOIN banks b ON l.financier_id = b.id
-      WHERE l.stage = 'disbursed' ${dateFilter}
+      SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      WHERE l.application_stage = 'DISBURSED' ${dateFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
 
-    // 3. PDD Tracker
+    // 2a. Financier wise Approved loans (NEW)
+    const approvedBankWise = await db.query(`
+      SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      WHERE l.application_stage = 'APPROVED' ${dateFilter}
+      GROUP BY 1
+      ORDER BY 2 DESC
+    `, params);
+
+    // 3. PDD Tracker (abandoned loans)
     const pddTrackerRows = await db.query(`
       SELECT 
         CASE 
@@ -70,24 +80,24 @@ export const getDashboardStats = async (req, res) => {
           ELSE '90+'
         END as bucket,
         COUNT(*) as count
-      FROM leads l
-      WHERE stage = 'abnd' ${dateFilter} 
+      FROM loans l
+      WHERE l.application_stage = 'REJECTED' ${dateFilter} 
       GROUP BY 1
     `, params);
 
     const pddTracker = {};
     pddTrackerRows.rows.forEach(r => pddTracker[r.bucket] = parseInt(r.count || 0));
 
-    // 4. Monthly Tracker (KPIs)
+    // 4. Monthly Tracker (KPIs) - from loans table
     const monthlyTrackerQuery = await db.query(`
       SELECT 
-        COUNT(CASE WHEN stage IN ('login', 'approved', 'abnd', 'disbursed') THEN 1 END) as login_units,
-        COUNT(CASE WHEN stage IN ('login', 'in_process') THEN 1 END) as inprocess_units,
-        COUNT(CASE WHEN stage IN ('approved', 'abnd', 'disbursed') THEN 1 END) as approved_units,
-        SUM(CASE WHEN stage IN ('approved', 'abnd', 'disbursed') THEN COALESCE(loan_amount_required, 0) ELSE 0 END) as approved_amount,
-        COUNT(CASE WHEN stage = 'disbursed' THEN 1 END) as disbursed_units,
-        SUM(CASE WHEN stage = 'disbursed' THEN COALESCE(loan_amount_required, 0) ELSE 0 END) as disbursed_amount
-      FROM leads l
+        COUNT(CASE WHEN application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') THEN 1 END) as login_units,
+        COUNT(CASE WHEN application_stage = 'IN_PROCESS' THEN 1 END) as inprocess_units,
+        COUNT(CASE WHEN application_stage = 'APPROVED' THEN 1 END) as approved_units,
+        SUM(CASE WHEN application_stage = 'APPROVED' THEN COALESCE(loan_amount, 0) ELSE 0 END) as approved_amount,
+        COUNT(CASE WHEN application_stage = 'DISBURSED' THEN 1 END) as disbursed_units,
+        SUM(CASE WHEN application_stage = 'DISBURSED' THEN COALESCE(loan_amount, 0) ELSE 0 END) as disbursed_amount
+      FROM loans l
       WHERE 1=1 ${trackerDateFilter}
     `, trackerParams);
 
@@ -95,8 +105,8 @@ export const getDashboardStats = async (req, res) => {
 
     // 5. Stage Breakdown (Funnel)
     const stageBreakdown = await db.query(`
-      SELECT stage, COUNT(*) as count 
-      FROM leads l
+      SELECT application_stage as stage, COUNT(*) as count 
+      FROM loans l
       WHERE 1=1 ${dateFilter}
       GROUP BY 1
       ORDER BY 2 DESC
@@ -105,14 +115,15 @@ export const getDashboardStats = async (req, res) => {
     // 6. In Process Tags
     const inProcessTags = await db.query(`
       SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
-      FROM leads l 
-      WHERE stage IN ('login', 'lead') ${dateFilter} 
+      FROM loans l 
+      WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} 
       GROUP BY 1
     `, params);
 
     res.json({
       loginBankWise: loginStats.rows,
       disbursementBankWise: disbursementBankWise.rows,
+      approvedBankWise: approvedBankWise.rows,
       pddTracker: pddTracker,
       stageBreakdown: stageBreakdown.rows,
       monthlyTracker: {

@@ -27,6 +27,7 @@ import accountantRoutes from './routes/accountant.js';
 import integrationRoutes from './routes/integrations.js';
 import timelineRoutes from './routes/timeline.js';
 import fieldPermissionRoutes from './routes/fieldPermissions.js';
+import permissionRoutes from './routes/permissions.js';
 import applicationStageRoutes from './routes/applicationStages.js';
 import whatsappRoutes from './routes/whatsapp.js';
 import kycRoutes from './routes/kyc.js';
@@ -69,6 +70,7 @@ app.use('/api/commissions', commissionRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/branches', branchRoutes);
 app.use('/api/field-permissions', fieldPermissionRoutes);
+app.use('/api/permissions', permissionRoutes);
 
 // New PRD Modules
 app.use('/api/expenses', expenseRoutes);

@@ -307,6 +307,16 @@ const migrate = async () => {
     );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS role_permissions(
+      id SERIAL PRIMARY KEY,
+      role VARCHAR(50) NOT NULL UNIQUE,
+      permissions JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    `);
+
     console.log('✅ Migrations completed successfully!');
   } catch (error) {
     console.error('❌ Migration error:', error);

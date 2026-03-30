@@ -35,6 +35,7 @@ import kycRoutes from './routes/kyc.js';
 import templateRoutes from './routes/templates.js';
 import chatbotRoutes from './routes/chatbot.js';
 import linkLoanRoutes from './routes/linkLoan.js';
+import findLenderRoutes from './routes/findLender.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -91,6 +92,7 @@ app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/templates', templateRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/link-loan', linkLoanRoutes);
+app.use('/api/find-lender', findLenderRoutes);
 
 app.get('/', (req, res) => {
   res.json({

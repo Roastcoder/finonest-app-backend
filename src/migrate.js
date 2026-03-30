@@ -301,10 +301,17 @@ const migrate = async () => {
       sales_manager_mobile VARCHAR(20),
       area_sales_manager_name VARCHAR(255),
       area_sales_manager_mobile VARCHAR(20),
+      latitude DECIMAL(10, 8),
+      longitude DECIMAL(11, 8),
       status VARCHAR(20) DEFAULT 'active',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+    `);
+
+    await client.query(`
+      ALTER TABLE bank_branches ADD COLUMN IF NOT EXISTS latitude DECIMAL(10, 8);
+      ALTER TABLE bank_branches ADD COLUMN IF NOT EXISTS longitude DECIMAL(11, 8);
     `);
 
     await client.query(`

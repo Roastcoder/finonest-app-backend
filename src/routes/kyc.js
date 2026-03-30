@@ -21,13 +21,30 @@ router.get('/test', (req, res) => {
 });
 
 // PAN verification endpoints
-router.post('/verify-pan', verifyPan); // No auth - used during signup
+router.post('/verify-pan', (req, res, next) => {
+  // Try authenticate but don't fail if no token (signup flow)
+  const authHeader = req.headers['authorization'];
+  if (authHeader) return authenticate(req, res, next);
+  next();
+}, verifyPan);
 router.post('/verify-and-save-pan', authenticate, verifyAndSavePan);
 
 // Aadhaar verification endpoints
-router.post('/send-aadhaar-otp', authenticate, sendAadhaarOtp);
-router.post('/verify-aadhaar-otp', authenticate, verifyAadhaarOtp);
-router.post('/verify-aadhaar', authenticate, verifyAadhaar);
+router.post('/send-aadhaar-otp', (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) return authenticate(req, res, next);
+  next();
+}, sendAadhaarOtp);
+router.post('/verify-aadhaar-otp', (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) return authenticate(req, res, next);
+  next();
+}, verifyAadhaarOtp);
+router.post('/verify-aadhaar', (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) return authenticate(req, res, next);
+  next();
+}, verifyAadhaar);
 router.post('/save-aadhaar-data', authenticate, saveAadhaarData);
 
 export default router;

@@ -1,8 +1,8 @@
 import axios from 'axios';
 import db from '../config/database.js';
 
-const EXPERIAN_URL = `${process.env.KYC_BASE_URL}/core-svc/api/v2/exp/experian-credit-report`;
 const CACHE_DAYS = 90;
+const getExperianURL = () => `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/experian-credit-report`;
 const ALLOWED_ROLES = ['admin', 'sales_manager', 'branch_manager'];
 
 // Ensure tables exist
@@ -42,7 +42,7 @@ ensureTables().catch(console.error);
 // Call Experian API — field names exactly as per curl spec
 async function callExperianAPI(mobile_no, first_name, last_name) {
   const response = await axios.post(
-    EXPERIAN_URL,
+    getExperianURL(),
     { mobile_no, first_name, last_name },
     {
       headers: {

@@ -729,13 +729,13 @@ export const getProfile = async (req, res) => {
     let aadhaarData = null;
     
     try {
-      panData = user.pan_data ? JSON.parse(user.pan_data) : null;
+      panData = user.pan_data ? (typeof user.pan_data === 'object' ? user.pan_data : JSON.parse(user.pan_data)) : null;
     } catch (e) {
       console.error('Error parsing PAN data:', e);
     }
     
     try {
-      aadhaarData = user.aadhaar_data ? JSON.parse(user.aadhaar_data) : null;
+      aadhaarData = user.aadhaar_data ? (typeof user.aadhaar_data === 'object' ? user.aadhaar_data : JSON.parse(user.aadhaar_data)) : null;
     } catch (e) {
       console.error('Error parsing Aadhaar data:', e);
     }
@@ -764,7 +764,8 @@ export const getProfile = async (req, res) => {
         // Handle different date formats
         date_of_birth: aadhaarData.date_of_birth || aadhaarData.dob || null,
         // Handle name variations
-        name: aadhaarData.full_name || aadhaarData.name || null,
+        full_name: aadhaarData.full_name || aadhaarData.name || null,
+        name: aadhaarData.name || aadhaarData.full_name || null,
         // Handle father name
         father_name: aadhaarData.father_name || aadhaarData.care_of || null
       };

@@ -397,28 +397,30 @@ export const verifyAadhaarOtp = async (req, res) => {
       
       // Save Aadhaar data to database in background
       try {
-        const client = await db.connect();
-        await client.query(`
-          UPDATE users SET 
-            aadhaar_number = $1,
-            aadhaar_verified = true,
-            aadhaar_data = $2,
-            date_of_birth = $3,
-            father_name = $4,
-            address_line1 = $5,
-            gender = $6
-          WHERE id = $7
-        `, [
-          aadhaarData.aadhaar_number,
-          JSON.stringify(aadhaarData),
-          aadhaarData.date_of_birth,
-          aadhaarData.father_name,
-          aadhaarData.address,
-          aadhaarData.gender,
-          req.user.id
-        ]);
-        client.release();
-        console.log('Aadhaar data saved to database successfully');
+        if (req.user?.id) {
+          const client = await db.connect();
+          await client.query(`
+            UPDATE users SET 
+              aadhaar_number = $1,
+              aadhaar_verified = true,
+              aadhaar_data = $2,
+              date_of_birth = $3,
+              father_name = $4,
+              address_line1 = $5,
+              gender = $6
+            WHERE id = $7
+          `, [
+            aadhaarData.aadhaar_number,
+            JSON.stringify(aadhaarData),
+            aadhaarData.date_of_birth,
+            aadhaarData.father_name,
+            aadhaarData.address,
+            aadhaarData.gender,
+            req.user.id
+          ]);
+          client.release();
+          console.log('Aadhaar data saved to database successfully');
+        }
       } catch (dbError) {
         console.log('Database save failed for Aadhaar:', dbError.message);
       }

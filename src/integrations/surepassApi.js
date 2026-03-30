@@ -48,7 +48,7 @@ export const verifyPanComprehensive = async (panNumber) => {
 export const sendAadhaarOtpSurepass = async (aadhaarNumber) => {
   try {
     const response = await axios.post(
-      `${SUREPASS_BASE_URL}/aadhaar/generate-otp`,
+      `${SUREPASS_BASE_URL}/aadhaar-v2/generate-otp`,
       {
         id_number: aadhaarNumber
       },
@@ -76,7 +76,7 @@ export const sendAadhaarOtpSurepass = async (aadhaarNumber) => {
 export const verifyAadhaarOtpSurepass = async (clientId, otp) => {
   try {
     const response = await axios.post(
-      `${SUREPASS_BASE_URL}/aadhaar/submit-otp`,
+      `${SUREPASS_BASE_URL}/aadhaar-v2/submit-otp`,
       {
         client_id: clientId,
         otp: otp

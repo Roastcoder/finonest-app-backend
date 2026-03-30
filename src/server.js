@@ -1,6 +1,7 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import db from './config/database.js';
 import authRoutes from './routes/auth.js';
 import loanRoutes from './routes/loans.js';
@@ -38,8 +39,6 @@ import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
 import simpleScheduler from './utils/simpleScheduler.js';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;

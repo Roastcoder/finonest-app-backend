@@ -2,7 +2,7 @@ import axios from 'axios';
 import db from '../config/database.js';
 
 const CACHE_DAYS = 90;
-const getExperianURL = () => `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/experian-credit-report`;
+const getExperianURL = () => `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/user-profiling/credit-report`;
 const ALLOWED_ROLES = ['admin', 'sales_manager', 'branch_manager'];
 
 // Ensure tables exist
@@ -39,17 +39,27 @@ const ensureTables = async () => {
 };
 ensureTables().catch(console.error);
 
-// Call Experian API — field names exactly as per curl spec
-async function callExperianAPI(mobile_no, first_name, last_name) {
+// Call Experian API — new user-profiling endpoint
+async function callExperianAPI(mobile_no, first_name, last_name, pan, email, gender, dob, pincode) {
   const response = await axios.post(
     getExperianURL(),
-    { mobile_no, first_name, last_name },
+    {
+      phone: mobile_no,
+      firstName: first_name,
+      lastName: last_name || 'X',
+      ...(pan && { pan }),
+      ...(email && { email }),
+      ...(gender && { gender }),
+      ...(dob && { dateOfBirth: dob }),
+      ...(pincode && { pincode }),
+    },
     {
       headers: {
         'Content-Type': 'application/json',
         'client-user-id': process.env.KYC_CLIENT_USER_ID,
         'secret-key': process.env.KYC_SECRET_KEY,
         'access-key': process.env.KYC_ACCESS_KEY,
+        'service-id': process.env.KYC_CREDIT_REPORT_SERVICE_ID || 'a7b1b8a4-4ade-42c0-bf26-d77825fd2229',
       },
       timeout: 30000,
     }
@@ -123,11 +133,27 @@ export const rcLookup = async (req, res) => {
       [rcUpper, 'RC_LOOKUP', req.user.id, JSON.stringify({ rc_number: rcUpper })]
     ).catch(() => {});
 
+    // Try to fetch PAN from leads/loans
+    let pan = '';
+    const panR = await db.query(
+      `SELECT pan_number FROM leads WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND pan_number IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [rcStripped]
+    );
+    if (panR.rows.length > 0) pan = panR.rows[0].pan_number;
+    if (!pan) {
+      const panR2 = await db.query(
+        `SELECT pan_number FROM loans WHERE UPPER(REPLACE(vehicle_number,' ','')) = $1 AND pan_number IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [rcStripped]
+      );
+      if (panR2.rows.length > 0) pan = panR2.rows[0].pan_number;
+    }
+
     res.json({
       rc_number: rcUpper,
       first_name,
       last_name,
       mobile,
+      pan,
       maker_name: rc.maker_description || '',
       model_name: rc.maker_model || '',
       finance_status: rc.finance_status || (rc.financer ? 'Active' : 'Not Financed'),
@@ -147,7 +173,7 @@ export const getCreditReport = async (req, res) => {
   try {
     if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
 
-    const { mobile, first_name, last_name, rc_number, force_refresh } = req.body;
+    const { mobile, first_name, last_name, rc_number, force_refresh, pan, email, dob, pincode } = req.body;
 
     if (!first_name || !first_name.trim()) {
       return res.status(400).json({ error: 'Customer first name is required' });
@@ -171,6 +197,7 @@ export const getCreditReport = async (req, res) => {
           cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
           auto_loans: extractAutoLoans(cached.rows[0].credit_data),
           credit_score: extractCreditScore(cached.rows[0].credit_data),
+          full_report: extractFullReport(cached.rows[0].credit_data),
         });
       }
     }
@@ -181,7 +208,12 @@ export const getCreditReport = async (req, res) => {
       creditData = await callExperianAPI(
         (mobile || '').trim(),
         first_name.trim(),
-        (last_name || '').trim()
+        (last_name || '').trim(),
+        pan || '',
+        email || '',
+        '',
+        dob || '',
+        pincode || ''
       );
     } catch (err) {
       console.error('Experian API error:', err.response?.status, JSON.stringify(err.response?.data));
@@ -203,7 +235,7 @@ export const getCreditReport = async (req, res) => {
       [rcUpper, force_refresh ? 'CREDIT_REPULL' : 'CREDIT_FETCH', req.user.id, JSON.stringify({ mobile, first_name })]
     ).catch(() => {});
 
-    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData), credit_score: extractCreditScore(creditData) });
+    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData), credit_score: extractCreditScore(creditData), full_report: extractFullReport(creditData) });
   } catch (error) {
     console.error('Credit report error:', error);
     res.status(500).json({ error: error.message });
@@ -350,10 +382,9 @@ const ACCOUNT_TYPE_NAMES = {
 function extractCreditScore(creditData) {
   try {
     const score =
+      creditData?.data?.SCORE?.FCIREXScore ||
       creditData?.data?.result?.SCORE?.BureauScore ||
       creditData?.result?.SCORE?.BureauScore ||
-      creditData?.data?.result?.SCORE?.score ||
-      creditData?.result?.SCORE?.score ||
       null;
     const n = Number(score);
     return (!isNaN(n) && n > 0) ? n : null;
@@ -363,15 +394,17 @@ function extractCreditScore(creditData) {
 function extractAutoLoans(creditData) {
   try {
     const accounts =
+      creditData?.data?.CAIS_Account?.CAIS_Account_DETAILS ||
       creditData?.data?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
       creditData?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
       [];
 
     const arr = Array.isArray(accounts) ? accounts : [accounts];
 
-    const activeArr = arr.filter(acc => acc && String(acc.Account_Status || '').trim() === '11');
+    // Account_Status 11 (integer or string) = Active
+    const activeArr = arr.filter(acc => acc && String(acc.Account_Status).trim() === '11');
 
-    // Find AUTO LOAN (type 1) accounts — these are the primary vehicle loans
+    // Find AUTO LOAN (type 1) accounts
     const autoLoans = activeArr.filter(acc => {
       const code = String(acc.Account_Type || '').trim().replace(/^0+/, '');
       return code === '1';
@@ -380,7 +413,7 @@ function extractAutoLoans(creditData) {
     // Get unique banks that have an AUTO LOAN
     const autoLoanBanks = new Set(autoLoans.map(acc => (acc.Subscriber_Name || '').toLowerCase().trim()));
 
-    // From those same banks, find all other active loans of the allowed types
+    // From those same banks, find all other active loans
     const linkLoans = activeArr.filter(acc => {
       const bank = (acc.Subscriber_Name || '').toLowerCase().trim();
       if (!autoLoanBanks.has(bank)) return false;
@@ -391,14 +424,14 @@ function extractAutoLoans(creditData) {
     return linkLoans.map(acc => ({
       account_number: acc.Account_Number || '',
       subscriber_name: acc.Subscriber_Name || '',
-      account_type: ACCOUNT_TYPE_NAMES[String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00'] || acc.Account_Type || '',
+      account_type: ACCOUNT_TYPE_NAMES[String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00'] || String(acc.Account_Type) || '',
       account_type_code: String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00',
       sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
       current_balance: Number(acc.Current_Balance || 0),
-      open_date: fmtDate(acc.Open_Date),
-      account_holder_type: acc.AccountHoldertypeCode === '1' ? 'Individual' : (acc.AccountHoldertypeCode || ''),
+      open_date: fmtDate(String(acc.Open_Date || '')),
+      account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : (String(acc.AccountHoldertypeCode) || ''),
       account_status: 'Active',
-      date_reported: fmtDate(acc.Date_Reported),
+      date_reported: fmtDate(String(acc.Date_Reported || '')),
     }));
   } catch (e) {
     console.error('extractAutoLoans error:', e);
@@ -409,4 +442,62 @@ function extractAutoLoans(creditData) {
 function fmtDate(raw) {
   if (!raw || String(raw).length !== 8) return raw || '';
   return `${raw.slice(6, 8)}/${raw.slice(4, 6)}/${raw.slice(0, 4)}`;
+}
+
+function extractFullReport(creditData) {
+  try {
+    const d = creditData?.data || creditData?.result || {};
+    const accounts = d?.CAIS_Account?.CAIS_Account_DETAILS || [];
+    const arr = Array.isArray(accounts) ? accounts : [accounts];
+    const applicant = d?.Current_Application?.Current_Application_Details?.Current_Applicant_Details || {};
+    const caps = d?.CAPS?.CAPS_Application_Details || [];
+    const nonCreditCaps = d?.NonCreditCAPS?.CAPS_Application_Details || [];
+
+    const personal = {
+      name: `${applicant.First_Name || ''} ${applicant.Last_Name || ''}`.trim() || null,
+      dob: applicant.Date_Of_Birth_Applicant ? fmtDate(String(applicant.Date_Of_Birth_Applicant)) : null,
+      gender: applicant.Gender_Code === 1 ? 'Male' : applicant.Gender_Code === 2 ? 'Female' : null,
+      pan: applicant.IncomeTaxPan || null,
+      mobile: applicant.MobilePhoneNumber ? String(applicant.MobilePhoneNumber) : null,
+      email: applicant.EMailId || null,
+    };
+
+    const mappedAccounts = arr.filter(Boolean).map(acc => ({
+      account_number: acc.Account_Number || '',
+      subscriber_name: acc.Subscriber_Name || '',
+      account_type: String(acc.Account_Type || ''),
+      account_status: String(acc.Account_Status) === '11' ? 'Active' : 'Closed',
+      sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
+      current_balance: Number(acc.Current_Balance || 0),
+      amount_overdue: Number(acc.Amount_Past_Due || 0),
+      emi_amount: Number(acc.Scheduled_Monthly_Payment_Amount || 0),
+      open_date: fmtDate(String(acc.Open_Date || '')),
+      close_date: acc.Date_Closed ? fmtDate(String(acc.Date_Closed).replace(/-/g, '')) : '',
+      date_of_last_payment: acc.Date_of_Last_Payment ? fmtDate(String(acc.Date_of_Last_Payment).replace(/-/g, '')) : '',
+      date_reported: fmtDate(String(acc.Date_Reported || '')),
+      account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : String(acc.AccountHoldertypeCode || ''),
+      payment_history: (() => {
+        const hist = acc.CAIS_Account_History || [];
+        const histArr = Array.isArray(hist) ? hist : [hist];
+        return histArr.map(h => ({
+          month: `${String(h.Month || '').padStart(2,'0')}/${h.Year || ''}`,
+          days_past_due: Number(h.Days_Past_Due || 0),
+          asset_classification: h.Asset_Classification || '',
+        }));
+      })(),
+    }));
+
+    const allEnquiries = [...(Array.isArray(caps) ? caps : [caps]), ...(Array.isArray(nonCreditCaps) ? nonCreditCaps : [nonCreditCaps])].filter(Boolean);
+    const enquiries = allEnquiries.map(e => ({
+      institution_name: e.Subscriber_Name || '',
+      enquiry_purpose: e.Finance_Purpose ? String(e.Finance_Purpose) : '',
+      enquiry_date: fmtDate(String(e.Date_of_Request || '')),
+      amount: Number(e.Amount_Financed || 0),
+    }));
+
+    return { personal, accounts: mappedAccounts, enquiries };
+  } catch (e) {
+    console.error('extractFullReport error:', e);
+    return { personal: {}, accounts: [], enquiries: [] };
+  }
 }

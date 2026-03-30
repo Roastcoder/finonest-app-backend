@@ -20,6 +20,7 @@ const ensureTables = async () => {
     )
   `);
   await db.query(`ALTER TABLE experian_credit_cache ALTER COLUMN mobile DROP NOT NULL`).catch(() => {});
+  await db.query(`ALTER TABLE experian_credit_cache ADD COLUMN IF NOT EXISTS pan_number VARCHAR(20)`).catch(() => {});
   await db.query(`
     CREATE TABLE IF NOT EXISTS link_loan_audit (
       id SERIAL PRIMARY KEY,
@@ -183,22 +184,26 @@ export const getCreditReport = async (req, res) => {
     }
 
     const rcUpper = (rc_number || '').toUpperCase().trim();
+    const panUpper = (pan || '').toUpperCase().trim();
 
-    // Check 90-day cache
+    // Check 90-day cache by RC number first, then by PAN
     if (!force_refresh) {
-      const cached = await db.query(
-        `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE rc_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`,
-        [rcUpper]
-      );
-      if (cached.rows.length > 0) {
-        const ageDays = Math.floor((Date.now() - new Date(cached.rows[0].fetched_at).getTime()) / 86400000);
-        return res.json({
-          from_cache: true,
-          cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
-          auto_loans: extractAutoLoans(cached.rows[0].credit_data),
-          credit_score: extractCreditScore(cached.rows[0].credit_data),
-          full_report: extractFullReport(cached.rows[0].credit_data),
-        });
+      let cacheQuery = rcUpper
+        ? `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE rc_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`
+        : `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE pan_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`;
+      const cacheKey = rcUpper || panUpper;
+      if (cacheKey) {
+        const cached = await db.query(cacheQuery, [cacheKey]);
+        if (cached.rows.length > 0) {
+          const ageDays = Math.floor((Date.now() - new Date(cached.rows[0].fetched_at).getTime()) / 86400000);
+          return res.json({
+            from_cache: true,
+            cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
+            auto_loans: extractAutoLoans(cached.rows[0].credit_data),
+            credit_score: extractCreditScore(cached.rows[0].credit_data),
+            full_report: extractFullReport(cached.rows[0].credit_data),
+          });
+        }
       }
     }
 
@@ -223,11 +228,12 @@ export const getCreditReport = async (req, res) => {
     }
 
     // Cache result
+    const cacheRc = rcUpper || `PAN_${panUpper}`;
     await db.query(
-      `INSERT INTO experian_credit_cache (rc_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
-       VALUES ($1,$2,$3,$4,$5,NOW(),$6)
-       ON CONFLICT (rc_number) DO UPDATE SET credit_data=$5, fetched_at=NOW(), fetched_by=$6`,
-      [rcUpper, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
+      `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
+       ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
+      [cacheRc, panUpper || null, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
     );
 
     await db.query(
@@ -401,36 +407,24 @@ function extractAutoLoans(creditData) {
 
     const arr = Array.isArray(accounts) ? accounts : [accounts];
 
-    // Account_Status 11 (integer or string) = Active
-    const activeArr = arr.filter(acc => acc && String(acc.Account_Status).trim() === '11');
-
-    // Find AUTO LOAN (type 1) accounts
-    const autoLoans = activeArr.filter(acc => {
+    // Filter only AUTO LOAN type (type 1) — both active and closed
+    const autoLoans = arr.filter(acc => {
+      if (!acc) return false;
       const code = String(acc.Account_Type || '').trim().replace(/^0+/, '');
       return code === '1';
     });
 
-    // Get unique banks that have an AUTO LOAN
-    const autoLoanBanks = new Set(autoLoans.map(acc => (acc.Subscriber_Name || '').toLowerCase().trim()));
-
-    // From those same banks, find all other active loans
-    const linkLoans = activeArr.filter(acc => {
-      const bank = (acc.Subscriber_Name || '').toLowerCase().trim();
-      if (!autoLoanBanks.has(bank)) return false;
-      const code = String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00';
-      return ALLOWED_ACCOUNT_TYPES.has(code);
-    });
-
-    return linkLoans.map(acc => ({
+    return autoLoans.map(acc => ({
       account_number: acc.Account_Number || '',
       subscriber_name: acc.Subscriber_Name || '',
-      account_type: ACCOUNT_TYPE_NAMES[String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00'] || String(acc.Account_Type) || '',
-      account_type_code: String(acc.Account_Type || '').trim().replace(/^0+/, '') || '00',
+      account_type: 'AUTO LOAN',
+      account_type_code: '1',
       sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
       current_balance: Number(acc.Current_Balance || 0),
       open_date: fmtDate(String(acc.Open_Date || '')),
+      close_date: acc.Date_Closed ? fmtDate(String(acc.Date_Closed).replace(/-/g, '')) : '',
       account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : (String(acc.AccountHoldertypeCode) || ''),
-      account_status: 'Active',
+      account_status: String(acc.Account_Status) === '11' ? 'Active' : 'Closed',
       date_reported: fmtDate(String(acc.Date_Reported || '')),
     }));
   } catch (e) {

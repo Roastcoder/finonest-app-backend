@@ -228,13 +228,21 @@ export const getCreditReport = async (req, res) => {
     }
 
     // Cache result
-    const cacheRc = rcUpper || `PAN_${panUpper}`;
-    await db.query(
-      `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
-       ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
-      [cacheRc, panUpper || null, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
-    );
+    if (rcUpper) {
+      await db.query(
+        `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+         VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
+         ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
+        [rcUpper, panUpper || null, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
+      ).catch(err => console.error('Cache insert error (RC):', err));
+    } else if (panUpper) {
+      await db.query(
+        `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+         VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
+         ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
+        [`PAN_${panUpper}`, panUpper, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
+      ).catch(err => console.error('Cache insert error (PAN):', err));
+    }
 
     await db.query(
       'INSERT INTO link_loan_audit (rc_number, action, performed_by, details) VALUES ($1,$2,$3,$4)',

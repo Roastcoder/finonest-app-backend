@@ -30,23 +30,25 @@ export const verifyPan = async (req, res) => {
     if (result.success) {
       // Try to update user name in database with real PAN name
       try {
-        const client = await db.connect();
-        const updateResult = await client.query(`
-          UPDATE users SET 
-            full_name = $1,
-            name = $1,
-            pan_number = $2,
-            pan_verified = true,
-            pan_data = $3
-          WHERE id = $4
-        `, [
-          result.data.full_name,
-          pan_number,
-          JSON.stringify(result.data),
-          req.user.id
-        ]);
-        client.release();
-        console.log('✅ User PAN data saved successfully:', result.data.full_name, 'Rows affected:', updateResult.rowCount);
+        if (req.user?.id) {
+          const client = await db.connect();
+          const updateResult = await client.query(`
+            UPDATE users SET 
+              full_name = $1,
+              name = $1,
+              pan_number = $2,
+              pan_verified = true,
+              pan_data = $3
+            WHERE id = $4
+          `, [
+            result.data.full_name,
+            pan_number,
+            JSON.stringify(result.data),
+            req.user.id
+          ]);
+          client.release();
+          console.log('✅ User PAN data saved successfully:', result.data.full_name, 'Rows affected:', updateResult.rowCount);
+        }
       } catch (dbError) {
         console.error('❌ Database update failed:', dbError.message, dbError.code);
       }
@@ -111,23 +113,25 @@ export const verifyPan = async (req, res) => {
     
     // Still try to save to database even with mock data
     try {
-      const client = await db.connect();
-      await client.query(`
-        UPDATE users SET 
-          full_name = $1,
-          name = $1,
-          pan_number = $2,
-          pan_verified = true,
-          pan_data = $3
-        WHERE id = $4
-      `, [
-        mockPanData.full_name,
-        pan_number,
-        JSON.stringify(mockPanData),
-        req.user.id
-      ]);
-      client.release();
-      console.log('Mock PAN data saved to database');
+      if (req.user?.id) {
+        const client = await db.connect();
+        await client.query(`
+          UPDATE users SET 
+            full_name = $1,
+            name = $1,
+            pan_number = $2,
+            pan_verified = true,
+            pan_data = $3
+          WHERE id = $4
+        `, [
+          mockPanData.full_name,
+          pan_number,
+          JSON.stringify(mockPanData),
+          req.user.id
+        ]);
+        client.release();
+        console.log('Mock PAN data saved to database');
+      }
     } catch (dbError) {
       console.log('Database save failed for mock data:', dbError.message);
     }

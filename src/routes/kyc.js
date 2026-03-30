@@ -21,7 +21,7 @@ router.get('/test', (req, res) => {
 });
 
 // PAN verification endpoints
-router.post('/verify-pan', authenticate, verifyPan);
+router.post('/verify-pan', verifyPan); // No auth - used during signup
 router.post('/verify-and-save-pan', authenticate, verifyAndSavePan);
 
 // Aadhaar verification endpoints

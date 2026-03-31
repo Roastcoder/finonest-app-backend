@@ -34,9 +34,33 @@ export const upload = multer({
 
 export const getAllBanks = async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM banks ORDER BY name');
-    res.json(result.rows);
+    const banksResult = await db.query('SELECT * FROM banks ORDER BY name');
+    const banks = banksResult.rows;
+    
+    // Get branches for each bank
+    const banksWithBranches = [];
+    for (const bank of banks) {
+      try {
+        const branchesResult = await db.query(
+          'SELECT * FROM bank_branches WHERE bank_id = $1 AND status = $2 ORDER BY branch_name',
+          [bank.id, 'active']
+        );
+        banksWithBranches.push({
+          ...bank,
+          branches: branchesResult.rows || []
+        });
+      } catch (branchError) {
+        console.error(`Error fetching branches for bank ${bank.id}:`, branchError.message);
+        banksWithBranches.push({
+          ...bank,
+          branches: []
+        });
+      }
+    }
+    
+    res.json(banksWithBranches);
   } catch (error) {
+    console.error('getAllBanks error:', error);
     res.status(500).json({ error: error.message });
   }
 };

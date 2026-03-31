@@ -36,6 +36,7 @@ import templateRoutes from './routes/templates.js';
 import chatbotRoutes from './routes/chatbot.js';
 import linkLoanRoutes from './routes/linkLoan.js';
 import findLenderRoutes from './routes/findLender.js';
+import googleMapsProxyRoutes from './routes/googleMapsProxy.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -93,6 +94,7 @@ app.use('/api/templates', templateRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/link-loan', linkLoanRoutes);
 app.use('/api/find-lender', findLenderRoutes);
+app.use('/api/google-maps', googleMapsProxyRoutes);
 
 app.get('/', (req, res) => {
   res.json({

@@ -6,6 +6,10 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 
 async function geocodeAddress(address) {
   try {
+    console.log(`\n🌐 [GOOGLE MAPS API] Starting geocode for: "${address}"`);
+    console.log(`📍 [GOOGLE MAPS API] Endpoint: https://maps.googleapis.com/maps/api/geocode/json`);
+    console.log(`📍 [GOOGLE MAPS API] Parameters: address="${address}", region="in"`);
+    
     const response = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
       params: {
         address: address,
@@ -17,6 +21,9 @@ async function geocodeAddress(address) {
 
     if (response.data.results && response.data.results.length > 0) {
       const location = response.data.results[0].geometry.location;
+      console.log(`✅ [GOOGLE MAPS API] Success! Got coordinates: lat=${location.lat}, lng=${location.lng}`);
+      console.log(`✅ [GOOGLE MAPS API] Formatted Address: ${response.data.results[0].formatted_address}\n`);
+      
       return {
         lat: location.lat,
         lng: location.lng,
@@ -24,34 +31,31 @@ async function geocodeAddress(address) {
       };
     }
 
+    console.log(`❌ [GOOGLE MAPS API] No results found for: "${address}"\n`);
     return null;
   } catch (error) {
-    console.error('Geocoding error:', error.message);
+    console.error(`❌ [GOOGLE MAPS API] Error: ${error.message}\n`);
     return null;
   }
 }
 
 async function getDistanceBetweenCoordinates(lat1, lng1, lat2, lng2) {
   try {
-    const response = await axios.get('https://maps.googleapis.com/maps/api/distancematrix/json', {
+    const response = await axios.get(`${OSRM_URL}/route/v1/driving/${lng1},${lat1};${lng2},${lat2}`, {
       params: {
-        origins: `${lat1},${lng1}`,
-        destinations: `${lat2},${lng2}`,
-        mode: 'driving',
-        key: GOOGLE_MAPS_API_KEY
+        overview: 'full',
+        alternatives: 'false'
       },
       timeout: 5000
     });
 
-    if (response.data.rows && response.data.rows.length > 0) {
-      const element = response.data.rows[0].elements[0];
-      if (element.status === 'OK' && element.distance) {
-        return Math.round(element.distance.value / 1000); // meters to km
-      }
+    if (response.data.routes && response.data.routes.length > 0) {
+      const distance = response.data.routes[0].distance;
+      return Math.round(distance / 1000); // meters to km
     }
     return null;
   } catch (error) {
-    console.error('Distance Matrix error:', error.message);
+    console.error('OSRM Distance error:', error.message);
     return null;
   }
 }
@@ -64,23 +68,32 @@ function parseGeoLimit(geoLimit) {
 
 export const findLendersByAddress = async (req, res) => {
   try {
+    console.log('\n\n========================================');
+    console.log('🚀 [FIND LENDER] Starting Find Lender Process');
+    console.log('========================================\n');
+    
     const { address, case_type, radius = 50 } = req.body;
 
     if (!address) {
       return res.status(400).json({ error: 'Address is required' });
     }
 
-    console.log(`🔍 Searching for lenders near: ${address}`);
+    console.log(`📍 [FIND LENDER] User searching for: "${address}"`);
+    console.log(`🎯 [FIND LENDER] Case Type: ${case_type || 'All'}`);
+    console.log(`📏 [FIND LENDER] Logic: Show branches where customer is within their service area\n`);
 
     // Geocode customer address
+    console.log(`🔍 [FIND LENDER] Step 1: Geocoding customer address...`);
     const customerCoords = await geocodeAddress(address);
     if (!customerCoords) {
+      console.log(`❌ [FIND LENDER] Failed to geocode customer address\n`);
       return res.status(400).json({ error: 'Could not find your address. Please try another location.' });
     }
 
-    console.log(`📍 Customer coordinates: ${customerCoords.lat}, ${customerCoords.lng}`);
+    console.log(`✅ [FIND LENDER] Customer coordinates obtained: lat=${customerCoords.lat}, lng=${customerCoords.lng}\n`);
 
-    // Get all active branches
+    // Get all active branches from DB
+    console.log(`🔍 [FIND LENDER] Step 2: Fetching branches from database...`);
     const query = `
       SELECT 
         id,
@@ -93,16 +106,19 @@ export const findLendersByAddress = async (req, res) => {
         sales_manager_mobile,
         area_sales_manager_name,
         area_sales_manager_mobile,
-        status
+        status,
+        latitude,
+        longitude
       FROM bank_branches
       WHERE status = 'active'
       AND location IS NOT NULL
     `;
 
     const result = await db.query(query);
-    const branches = result.rows;
+    let branches = result.rows;
 
     if (branches.length === 0) {
+      console.log(`❌ [FIND LENDER] No branches found in database\n`);
       return res.json({ 
         lenders: [], 
         message: 'No branches found in database',
@@ -111,7 +127,14 @@ export const findLendersByAddress = async (req, res) => {
       });
     }
 
-    console.log(`📍 Found ${branches.length} branches to check`);
+    console.log(`✅ [FIND LENDER] Found ${branches.length} total branches in database`);
+    
+    // Count branches with and without coordinates
+    const branchesWithCoords = branches.filter(b => b.latitude && b.longitude);
+    const branchesWithoutCoords = branches.filter(b => !b.latitude || !b.longitude);
+    
+    console.log(`   📊 Branches WITH coordinates in DB: ${branchesWithCoords.length}`);
+    console.log(`   📊 Branches WITHOUT coordinates in DB: ${branchesWithoutCoords.length}\n`);
 
     // Get bank details
     const bankQuery = `SELECT id, name, logo_url, status FROM banks WHERE status = 'active'`;
@@ -121,39 +144,84 @@ export const findLendersByAddress = async (req, res) => {
       banksMap[bank.id] = bank;
     });
 
-    // Geocode all branches and calculate distances
-    const lendersWithDistance = await Promise.all(
+    // Process branches - geocode missing ones and save to DB
+    console.log(`🔍 [FIND LENDER] Step 3: Processing branch coordinates...`);
+    let apiCallsCount = 0;
+    let dbSaveCount = 0;
+    
+    const processedBranches = await Promise.all(
       branches.map(async (branch) => {
-        let distance = null;
-        let branchCoords = null;
+        let lat = branch.latitude;
+        let lng = branch.longitude;
+        let source = 'database';
 
-        try {
-          // Geocode branch address
-          branchCoords = await geocodeAddress(branch.location);
+        // If branch doesn't have coordinates, geocode and save
+        if (!lat || !lng) {
+          console.log(`\n   🔄 [BRANCH] Processing: ${branch.branch_name}`);
+          console.log(`   📍 [BRANCH] Location: ${branch.location}`);
+          console.log(`   ⚠️  [BRANCH] No coordinates in DB - calling Google Maps API...`);
           
-          if (branchCoords) {
-            // Calculate distance using Google Maps Distance Matrix API
-            distance = await getDistanceBetweenCoordinates(
-              customerCoords.lat,
-              customerCoords.lng,
-              branchCoords.lat,
-              branchCoords.lng
-            );
+          const coords = await geocodeAddress(branch.location);
+          apiCallsCount++;
+          
+          if (coords) {
+            lat = coords.lat;
+            lng = coords.lng;
+            source = 'google-maps-api';
+            
+            // Save coordinates to DB
+            console.log(`   💾 [BRANCH] Saving coordinates to database...`);
+            await db.query(
+              `UPDATE bank_branches SET latitude = $1, longitude = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`,
+              [lat, lng, branch.id]
+            ).catch(err => console.error('Failed to save branch coordinates:', err));
+            
+            dbSaveCount++;
+            console.log(`   ✅ [BRANCH] Coordinates saved to DB: lat=${lat}, lng=${lng}`);
+          } else {
+            console.log(`   ❌ [BRANCH] Failed to geocode address`);
           }
-        } catch (error) {
-          console.error('Error processing branch', branch.id, ':', error.message);
+        } else {
+          console.log(`\n   ✅ [BRANCH] ${branch.branch_name} - Using cached coordinates from DB: lat=${lat}, lng=${lng}`);
+        }
+
+        return {
+          ...branch,
+          latitude: lat,
+          longitude: lng,
+          source: source
+        };
+      })
+    );
+
+    console.log(`\n📊 [FIND LENDER] Coordinate Processing Summary:`);
+    console.log(`   🌐 Google Maps API calls made: ${apiCallsCount}`);
+    console.log(`   💾 Branches saved to DB: ${dbSaveCount}`);
+    console.log(`   📦 Branches using cached DB coordinates: ${branches.length - apiCallsCount}\n`);
+
+    // Calculate distances and filter
+    console.log(`🔍 [FIND LENDER] Step 4: Calculating distances using OSRM...`);
+    const lendersWithDistance = await Promise.all(
+      processedBranches.map(async (branch) => {
+        let distance = null;
+
+        if (branch.latitude && branch.longitude) {
+          distance = await getDistanceBetweenCoordinates(
+            customerCoords.lat,
+            customerCoords.lng,
+            branch.latitude,
+            branch.longitude
+          );
         }
 
         const branchGeoLimit = parseGeoLimit(branch.geo_limit);
-        const effectiveLimit = branchGeoLimit || radius;
+        const isWithinServiceArea = distance !== null && branchGeoLimit && distance <= branchGeoLimit;
 
         return {
           ...branch,
           distance: distance,
           geo_limit_km: branchGeoLimit,
-          latitude: branchCoords?.lat,
-          longitude: branchCoords?.lng,
-          within_radius: distance !== null && distance <= Math.min(radius, effectiveLimit)
+          within_radius: isWithinServiceArea
         };
       })
     );
@@ -161,21 +229,25 @@ export const findLendersByAddress = async (req, res) => {
     // Filter branches within radius
     let filtered = lendersWithDistance.filter(l => l.within_radius && l.distance !== null);
 
-    console.log(`✅ Found ${filtered.length} branches within radius`);
+    console.log(`✅ [FIND LENDER] Distance calculation complete`);
+    console.log(`   📍 Branches where customer is within their service area: ${filtered.length}\n`);
 
     // Filter by case type if provided
     if (case_type) {
+      const beforeFilter = filtered.length;
       filtered = filtered.filter(branch => {
         if (!branch.product) return true;
         const products = branch.product.toLowerCase().split(',').map(p => p.trim());
         return products.includes(case_type.toLowerCase());
       });
+      console.log(`🎯 [FIND LENDER] Filtered by case type "${case_type}": ${beforeFilter} → ${filtered.length} branches\n`);
     }
 
     // Sort by distance
     filtered.sort((a, b) => (a.distance || 999999) - (b.distance || 999999));
 
     // Group by bank
+    console.log(`🔍 [FIND LENDER] Step 5: Grouping branches by bank...`);
     const lenderMap = {};
     filtered.forEach(branch => {
       const bank = banksMap[branch.bank_id];
@@ -203,25 +275,36 @@ export const findLendersByAddress = async (req, res) => {
         distance: branch.distance,
         geo_limit: branch.geo_limit,
         geo_limit_km: branch.geo_limit_km,
-        latitude: branch.latitude,
-        longitude: branch.longitude,
+        latitude: parseFloat(branch.latitude),
+        longitude: parseFloat(branch.longitude),
         sales_manager_name: branch.sales_manager_name,
         sales_manager_mobile: branch.sales_manager_mobile,
         area_sales_manager_name: branch.area_sales_manager_name,
         area_sales_manager_mobile: branch.area_sales_manager_mobile
       });
-
-      // Update product support
       if (branch.product) {
         const products = branch.product.toLowerCase().split(',').map(p => p.trim());
-        if (products.includes('purchase')) lenderMap[branch.bank_id].supports.purchase = true;
-        if (products.includes('refinance')) lenderMap[branch.bank_id].supports.refinance = true;
-        if (products.includes('bt')) lenderMap[branch.bank_id].supports.bt = true;
-        if (products.includes('credit card')) lenderMap[branch.bank_id].supports.credit_card = true;
+        if (products.includes('new car - purchase')) lenderMap[branch.bank_id].supports.purchase = true;
+        if (products.includes('used car - purchase')) lenderMap[branch.bank_id].supports.purchase = true;
+        if (products.includes('used car - refinance')) lenderMap[branch.bank_id].supports.refinance = true;
+        if (products.includes('used car - top-up')) lenderMap[branch.bank_id].supports.refinance = true;
+        if (products.includes('used car - bt')) lenderMap[branch.bank_id].supports.bt = true;
       }
     });
 
     const lenders = Object.values(lenderMap);
+
+    console.log(`✅ [FIND LENDER] Grouped into ${lenders.length} lenders\n`);
+
+    console.log(`========================================`);
+    console.log(`✅ [FIND LENDER] Process Complete!`);
+    console.log(`========================================`);
+    console.log(`📊 Final Results:`);
+    console.log(`   🏦 Total Lenders: ${lenders.length}`);
+    console.log(`   🏢 Total Branches: ${filtered.length}`);
+    console.log(`   🌐 Google API Calls: ${apiCallsCount}`);
+    console.log(`   💾 DB Saves: ${dbSaveCount}`);
+    console.log(`========================================\n`);
 
     res.json({
       lenders,
@@ -230,10 +313,15 @@ export const findLendersByAddress = async (req, res) => {
       search_coordinates: customerCoords,
       search_radius: radius,
       case_type: case_type || 'all',
-      message: `Found ${lenders.length} lenders with ${filtered.length} branches`
+      message: `Found ${lenders.length} lenders with ${filtered.length} branches where customer is within service area`,
+      stats: {
+        google_api_calls: apiCallsCount,
+        db_saves: dbSaveCount,
+        cached_from_db: branches.length - apiCallsCount
+      }
     });
   } catch (error) {
-    console.error('Find lenders by address error:', error);
+    console.error('❌ [FIND LENDER] Error:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -342,6 +430,8 @@ export const findLendersNearby = async (req, res) => {
         distance: branch.distance,
         geo_limit: branch.geo_limit,
         geo_limit_km: branch.geo_limit_km,
+        latitude: parseFloat(branch.latitude),
+        longitude: parseFloat(branch.longitude),
         sales_manager_name: branch.sales_manager_name,
         sales_manager_mobile: branch.sales_manager_mobile,
         area_sales_manager_name: branch.area_sales_manager_name,
@@ -350,9 +440,11 @@ export const findLendersNearby = async (req, res) => {
 
       if (branch.product) {
         const products = branch.product.toLowerCase().split(',').map(p => p.trim());
-        if (products.includes('purchase')) lenderMap[branch.bank_id].supports.purchase = true;
-        if (products.includes('refinance')) lenderMap[branch.bank_id].supports.refinance = true;
-        if (products.includes('bt')) lenderMap[branch.bank_id].supports.bt = true;
+        if (products.includes('new car - purchase')) lenderMap[branch.bank_id].supports.purchase = true;
+        if (products.includes('used car - purchase')) lenderMap[branch.bank_id].supports.purchase = true;
+        if (products.includes('used car - refinance')) lenderMap[branch.bank_id].supports.refinance = true;
+        if (products.includes('used car - top-up')) lenderMap[branch.bank_id].supports.refinance = true;
+        if (products.includes('used car - bt')) lenderMap[branch.bank_id].supports.bt = true;
       }
     });
 
@@ -509,6 +601,59 @@ export const saveSearch = async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Save search error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const saveAddressCoordinates = async (req, res) => {
+  try {
+    const { address, latitude, longitude } = req.body;
+
+    if (!address || latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ error: 'address, latitude, and longitude are required' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO address_coordinates (user_id, address, latitude, longitude, created_at)
+       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+       ON CONFLICT (address) DO UPDATE SET latitude = $3, longitude = $4, updated_at = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [req.user.id, address, latitude, longitude]
+    );
+
+    console.log(`📍 Saved coordinates for: ${address}`);
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Save address coordinates error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getAddressCoordinates = async (req, res) => {
+  try {
+    const { address } = req.body;
+
+    if (!address) {
+      return res.status(400).json({ error: 'address is required' });
+    }
+
+    const result = await db.query(
+      `SELECT latitude, longitude FROM address_coordinates WHERE address = $1 LIMIT 1`,
+      [address]
+    );
+
+    if (result.rows.length > 0) {
+      console.log(`✅ Found cached coordinates for: ${address}`);
+      return res.json({
+        found: true,
+        lat: result.rows[0].latitude,
+        lng: result.rows[0].longitude
+      });
+    }
+
+    res.json({ found: false });
+  } catch (error) {
+    console.error('Get address coordinates error:', error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -2,7 +2,8 @@ import axios from 'axios';
 import db from '../config/database.js';
 
 const CACHE_DAYS = 90;
-const getExperianURL = () => `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/user-profiling/credit-report`;
+const SUREPASS_API_URL = 'https://kyc-api.surepass.io/api/v1/credit-report-v2/fetch-report';
+const SUREPASS_TOKEN = process.env.SUREPASS_TOKEN || '';
 const ALLOWED_ROLES = ['admin', 'sales_manager', 'branch_manager'];
 
 // Ensure tables exist
@@ -40,32 +41,31 @@ const ensureTables = async () => {
 };
 ensureTables().catch(console.error);
 
-// Call Experian API — new user-profiling endpoint
-async function callExperianAPI(mobile_no, first_name, last_name, pan, email, gender, dob, pincode) {
-  const response = await axios.post(
-    getExperianURL(),
-    {
-      phone: mobile_no,
-      firstName: first_name,
-      lastName: last_name || 'X',
-      ...(pan && { pan }),
-      ...(email && { email }),
-      ...(gender && { gender }),
-      ...(dob && { dateOfBirth: dob }),
-      ...(pincode && { pincode }),
-    },
-    {
-      headers: {
-        'Content-Type': 'application/json',
-        'client-user-id': process.env.KYC_CLIENT_USER_ID,
-        'secret-key': process.env.KYC_SECRET_KEY,
-        'access-key': process.env.KYC_ACCESS_KEY,
-        'service-id': process.env.KYC_CREDIT_REPORT_SERVICE_ID || 'a7b1b8a4-4ade-42c0-bf26-d77825fd2229',
+// Call Surepass Credit Report API
+async function callSurepassAPI(name, id_number, id_type, mobile, consent = 'Y') {
+  try {
+    const response = await axios.post(
+      SUREPASS_API_URL,
+      {
+        name: name,
+        id_number: id_number,
+        id_type: id_type || 'aadhaar',
+        mobile: mobile,
+        consent: consent
       },
-      timeout: 30000,
-    }
-  );
-  return response.data;
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUREPASS_TOKEN}`
+        },
+        timeout: 30000
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Surepass API error:', error.response?.status, error.response?.data);
+    throw error;
+  }
 }
 
 // RC Lookup — DB only, no external RC API call
@@ -169,15 +169,18 @@ export const rcLookup = async (req, res) => {
   }
 };
 
-// Credit Report — 90-day cache, exact curl field names
+// Credit Report — 90-day cache, using Surepass API
 export const getCreditReport = async (req, res) => {
   try {
     if (!ALLOWED_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Access denied' });
 
-    const { mobile, first_name, last_name, rc_number, force_refresh, pan, email, dob, pincode } = req.body;
+    const { name, id_number, id_type, mobile, rc_number, force_refresh, pan } = req.body;
 
-    if (!first_name || !first_name.trim()) {
-      return res.status(400).json({ error: 'Customer first name is required' });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+    if (!id_number || !id_type) {
+      return res.status(400).json({ error: 'ID number and ID type are required' });
     }
     if (force_refresh && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only Admin can repull fresh credit data' });
@@ -185,71 +188,66 @@ export const getCreditReport = async (req, res) => {
 
     const rcUpper = (rc_number || '').toUpperCase().trim();
     const panUpper = (pan || '').toUpperCase().trim();
+    const cacheKey = rcUpper || panUpper || id_number;
 
-    // Check 90-day cache by RC number first, then by PAN
-    if (!force_refresh) {
-      let cacheQuery = rcUpper
-        ? `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE rc_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`
-        : `SELECT credit_data, fetched_at FROM experian_credit_cache WHERE pan_number = $1 AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'`;
-      const cacheKey = rcUpper || panUpper;
-      if (cacheKey) {
-        const cached = await db.query(cacheQuery, [cacheKey]);
-        if (cached.rows.length > 0) {
-          const ageDays = Math.floor((Date.now() - new Date(cached.rows[0].fetched_at).getTime()) / 86400000);
-          return res.json({
-            from_cache: true,
-            cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
-            auto_loans: extractAutoLoans(cached.rows[0].credit_data),
-            credit_score: extractCreditScore(cached.rows[0].credit_data),
-            full_report: extractFullReport(cached.rows[0].credit_data),
-          });
-        }
+    // Check 90-day cache
+    if (!force_refresh && cacheKey) {
+      const cached = await db.query(
+        `SELECT credit_data, fetched_at FROM experian_credit_cache 
+         WHERE (rc_number = $1 OR pan_number = $2) 
+         AND fetched_at > NOW() - INTERVAL '${CACHE_DAYS} days'
+         LIMIT 1`,
+        [rcUpper, panUpper]
+      );
+      if (cached.rows.length > 0) {
+        const ageDays = Math.floor((Date.now() - new Date(cached.rows[0].fetched_at).getTime()) / 86400000);
+        return res.json({
+          from_cache: true,
+          cache_age: `${ageDays} day${ageDays !== 1 ? 's' : ''} ago`,
+          credit_score: extractCreditScore(cached.rows[0].credit_data),
+          auto_loans: extractAutoLoans(cached.rows[0].credit_data),
+          full_report: extractFullReport(cached.rows[0].credit_data),
+        });
       }
     }
 
-    // Call Experian with exact curl field names: mobile_no, first_name, last_name
+    // Call Surepass API
     let creditData;
     try {
-      creditData = await callExperianAPI(
+      creditData = await callSurepassAPI(
+        name.trim(),
+        id_number.trim(),
+        id_type || 'aadhaar',
         (mobile || '').trim(),
-        first_name.trim(),
-        (last_name || '').trim(),
-        pan || '',
-        email || '',
-        '',
-        dob || '',
-        pincode || ''
+        'Y'
       );
     } catch (err) {
-      console.error('Experian API error:', err.response?.status, JSON.stringify(err.response?.data));
+      console.error('Surepass API error:', err.response?.status, JSON.stringify(err.response?.data));
       return res.status(502).json({
         error: `Credit bureau API failed (${err.response?.status || err.code}): ${err.response?.data?.message || err.message}`,
       });
     }
 
     // Cache result
-    if (rcUpper) {
-      await db.query(
-        `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
-         VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
-         ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
-        [rcUpper, panUpper || null, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
-      ).catch(err => console.error('Cache insert error (RC):', err));
-    } else if (panUpper) {
-      await db.query(
-        `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
-         VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)
-         ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7, pan_number=$2`,
-        [`PAN_${panUpper}`, panUpper, (mobile || '').trim(), first_name.trim(), (last_name || '').trim(), JSON.stringify(creditData), req.user.id]
-      ).catch(err => console.error('Cache insert error (PAN):', err));
-    }
+    await db.query(
+      `INSERT INTO experian_credit_cache (rc_number, pan_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+       ON CONFLICT (rc_number) DO UPDATE SET credit_data=$6, fetched_at=NOW(), fetched_by=$7`,
+      [rcUpper || `ID_${id_number}`, panUpper || null, (mobile || '').trim(), name.trim(), '', JSON.stringify(creditData), req.user.id]
+    ).catch(err => console.error('Cache insert error:', err));
 
     await db.query(
-      'INSERT INTO link_loan_audit (rc_number, action, performed_by, details) VALUES ($1,$2,$3,$4)',
-      [rcUpper, force_refresh ? 'CREDIT_REPULL' : 'CREDIT_FETCH', req.user.id, JSON.stringify({ mobile, first_name })]
+      'INSERT INTO link_loan_audit (rc_number, action, performed_by, details) VALUES ($1, $2, $3, $4)',
+      [rcUpper, force_refresh ? 'CREDIT_REPULL' : 'CREDIT_FETCH', req.user.id, JSON.stringify({ name, id_number, id_type, mobile })]
     ).catch(() => {});
 
-    res.json({ from_cache: false, cache_age: null, auto_loans: extractAutoLoans(creditData), credit_score: extractCreditScore(creditData), full_report: extractFullReport(creditData) });
+    res.json({
+      from_cache: false,
+      cache_age: null,
+      credit_score: extractCreditScore(creditData),
+      auto_loans: extractAutoLoans(creditData),
+      full_report: extractFullReport(creditData)
+    });
   } catch (error) {
     console.error('Credit report error:', error);
     res.status(500).json({ error: error.message });
@@ -349,15 +347,15 @@ export const autoCheckForLoan = async (req, res) => {
       fromCache = true;
     } else {
       try {
-        creditData = await callExperianAPI(mobile, first_name, last_name);
+        creditData = await callSurepassAPI(first_name, rcUpper, 'vehicle_rc', mobile, 'Y');
         await db.query(
-          `INSERT INTO experian_credit_cache (rc_number,mobile,first_name,last_name,credit_data,fetched_at,fetched_by)
-           VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+          `INSERT INTO experian_credit_cache (rc_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)
            ON CONFLICT (rc_number) DO UPDATE SET credit_data=$5, fetched_at=NOW(), fetched_by=$6`,
           [rcUpper, mobile, first_name, last_name, JSON.stringify(creditData), req.user.id]
         );
       } catch (err) {
-        console.error('Auto-check Experian error:', err.response?.status, err.message);
+        console.error('Auto-check Surepass error:', err.response?.status, err.message);
         return res.json({ skipped: true, reason: 'Credit API unavailable' });
       }
     }
@@ -396,9 +394,8 @@ const ACCOUNT_TYPE_NAMES = {
 function extractCreditScore(creditData) {
   try {
     const score =
-      creditData?.data?.SCORE?.FCIREXScore ||
-      creditData?.data?.result?.SCORE?.BureauScore ||
-      creditData?.result?.SCORE?.BureauScore ||
+      creditData?.data?.credit_score ||
+      creditData?.credit_score ||
       null;
     const n = Number(score);
     return (!isNaN(n) && n > 0) ? n : null;
@@ -407,34 +404,41 @@ function extractCreditScore(creditData) {
 
 function extractAutoLoans(creditData) {
   try {
-    const accounts =
-      creditData?.data?.CAIS_Account?.CAIS_Account_DETAILS ||
-      creditData?.data?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
-      creditData?.result?.CAIS_Account?.CAIS_Account_DETAILS ||
-      [];
-
-    const arr = Array.isArray(accounts) ? accounts : [accounts];
-
-    // Filter only AUTO LOAN type (type 1) — both active and closed
-    const autoLoans = arr.filter(acc => {
-      if (!acc) return false;
-      const code = String(acc.Account_Type || '').trim().replace(/^0+/, '');
-      return code === '1';
+    const creditReport = creditData?.data?.credit_report || creditData?.credit_report || {};
+    const ccrResponse = creditReport?.CCRResponse || {};
+    const cirReportDataLst = ccrResponse?.CIRReportDataLst || [];
+    
+    const autoLoans = [];
+    
+    cirReportDataLst.forEach(report => {
+      const cirData = report?.CIRReportData || {};
+      const retailAccountDetails = cirData?.RetailAccountDetails || [];
+      const retailArr = Array.isArray(retailAccountDetails) ? retailAccountDetails : [retailAccountDetails];
+      
+      retailArr.forEach(acc => {
+        if (!acc) return;
+        const accountType = String(acc.AccountType || '').toLowerCase();
+        
+        // Check if it's ONLY an auto loan (not credit card or other)
+        if (accountType.includes('auto loan')) {
+          autoLoans.push({
+            account_number: acc.AccountNumber || '',
+            subscriber_name: acc.Institution || '',
+            account_type: acc.AccountType || 'AUTO LOAN',
+            account_type_code: '1',
+            sanctioned_amount: Number(acc.SanctionAmount || 0),
+            current_balance: Number(acc.Balance || 0),
+            open_date: acc.DateOpened || '',
+            close_date: acc.DateClosed || '',
+            account_holder_type: acc.OwnershipType || 'Individual',
+            account_status: acc.Open === 'Yes' ? 'Active' : 'Closed',
+            date_reported: acc.DateReported || '',
+          });
+        }
+      });
     });
-
-    return autoLoans.map(acc => ({
-      account_number: acc.Account_Number || '',
-      subscriber_name: acc.Subscriber_Name || '',
-      account_type: 'AUTO LOAN',
-      account_type_code: '1',
-      sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
-      current_balance: Number(acc.Current_Balance || 0),
-      open_date: fmtDate(String(acc.Open_Date || '')),
-      close_date: acc.Date_Closed ? fmtDate(String(acc.Date_Closed).replace(/-/g, '')) : '',
-      account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : (String(acc.AccountHoldertypeCode) || ''),
-      account_status: String(acc.Account_Status) === '11' ? 'Active' : 'Closed',
-      date_reported: fmtDate(String(acc.Date_Reported || '')),
-    }));
+    
+    return autoLoans;
   } catch (e) {
     console.error('extractAutoLoans error:', e);
     return [];
@@ -448,56 +452,65 @@ function fmtDate(raw) {
 
 function extractFullReport(creditData) {
   try {
-    const d = creditData?.data || creditData?.result || {};
-    const accounts = d?.CAIS_Account?.CAIS_Account_DETAILS || [];
-    const arr = Array.isArray(accounts) ? accounts : [accounts];
-    const applicant = d?.Current_Application?.Current_Application_Details?.Current_Applicant_Details || {};
-    const caps = d?.CAPS?.CAPS_Application_Details || [];
-    const nonCreditCaps = d?.NonCreditCAPS?.CAPS_Application_Details || [];
-
-    const personal = {
-      name: `${applicant.First_Name || ''} ${applicant.Last_Name || ''}`.trim() || null,
-      dob: applicant.Date_Of_Birth_Applicant ? fmtDate(String(applicant.Date_Of_Birth_Applicant)) : null,
-      gender: applicant.Gender_Code === 1 ? 'Male' : applicant.Gender_Code === 2 ? 'Female' : null,
-      pan: applicant.IncomeTaxPan || null,
-      mobile: applicant.MobilePhoneNumber ? String(applicant.MobilePhoneNumber) : null,
-      email: applicant.EMailId || null,
-    };
-
-    const mappedAccounts = arr.filter(Boolean).map(acc => ({
-      account_number: acc.Account_Number || '',
-      subscriber_name: acc.Subscriber_Name || '',
-      account_type: String(acc.Account_Type || ''),
-      account_status: String(acc.Account_Status) === '11' ? 'Active' : 'Closed',
-      sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
-      current_balance: Number(acc.Current_Balance || 0),
-      amount_overdue: Number(acc.Amount_Past_Due || 0),
-      emi_amount: Number(acc.Scheduled_Monthly_Payment_Amount || 0),
-      open_date: fmtDate(String(acc.Open_Date || '')),
-      close_date: acc.Date_Closed ? fmtDate(String(acc.Date_Closed).replace(/-/g, '')) : '',
-      date_of_last_payment: acc.Date_of_Last_Payment ? fmtDate(String(acc.Date_of_Last_Payment).replace(/-/g, '')) : '',
-      date_reported: fmtDate(String(acc.Date_Reported || '')),
-      account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : String(acc.AccountHoldertypeCode || ''),
-      payment_history: (() => {
-        const hist = acc.CAIS_Account_History || [];
-        const histArr = Array.isArray(hist) ? hist : [hist];
-        return histArr.map(h => ({
-          month: `${String(h.Month || '').padStart(2,'0')}/${h.Year || ''}`,
-          days_past_due: Number(h.Days_Past_Due || 0),
-          asset_classification: h.Asset_Classification || '',
-        }));
-      })(),
-    }));
-
-    const allEnquiries = [...(Array.isArray(caps) ? caps : [caps]), ...(Array.isArray(nonCreditCaps) ? nonCreditCaps : [nonCreditCaps])].filter(Boolean);
-    const enquiries = allEnquiries.map(e => ({
-      institution_name: e.Subscriber_Name || '',
-      enquiry_purpose: e.Finance_Purpose ? String(e.Finance_Purpose) : '',
-      enquiry_date: fmtDate(String(e.Date_of_Request || '')),
-      amount: Number(e.Amount_Financed || 0),
-    }));
-
-    return { personal, accounts: mappedAccounts, enquiries };
+    const creditReport = creditData?.data?.credit_report || creditData?.credit_report || {};
+    const ccrResponse = creditReport?.CCRResponse || {};
+    const cirReportDataLst = ccrResponse?.CIRReportDataLst || [];
+    
+    let personal = {};
+    let allAccounts = [];
+    let enquiries = [];
+    
+    cirReportDataLst.forEach(report => {
+      const cirData = report?.CIRReportData || {};
+      const idInfo = cirData?.IDAndContactInfo || {};
+      const personalInfo = idInfo?.PersonalInfo || {};
+      
+      // Extract personal info from first report
+      if (!personal.name && personalInfo.Name) {
+        personal = {
+          name: `${personalInfo.Name?.FirstName || ''} ${personalInfo.Name?.LastName || ''}`.trim() || null,
+          dob: personalInfo.DateOfBirth || null,
+          gender: personalInfo.Gender || null,
+          pan: idInfo?.IdentityInfo?.PANId?.[0]?.IdNumber || null,
+          mobile: idInfo?.PhoneInfo?.[0]?.Number || null,
+          email: idInfo?.EmailAddressInfo?.[0]?.Email || null,
+        };
+      }
+      
+      // Extract accounts
+      const accounts = cirData?.CAIS_Account?.CAIS_Account_DETAILS || [];
+      const accountsArr = Array.isArray(accounts) ? accounts : [accounts];
+      
+      accountsArr.forEach(acc => {
+        if (!acc) return;
+        allAccounts.push({
+          account_number: acc.Account_Number || '',
+          subscriber_name: acc.Subscriber_Name || '',
+          account_type: String(acc.Account_Type || ''),
+          account_status: String(acc.Account_Status) === '11' ? 'Active' : 'Closed',
+          sanctioned_amount: Number(acc.Highest_Credit_or_Original_Loan_Amount || 0),
+          current_balance: Number(acc.Current_Balance || 0),
+          amount_overdue: Number(acc.Amount_Past_Due || 0),
+          emi_amount: Number(acc.Scheduled_Monthly_Payment_Amount || 0),
+          open_date: fmtDate(String(acc.Open_Date || '')),
+          close_date: acc.Date_Closed ? fmtDate(String(acc.Date_Closed).replace(/-/g, '')) : '',
+          date_of_last_payment: acc.Date_of_Last_Payment ? fmtDate(String(acc.Date_of_Last_Payment).replace(/-/g, '')) : '',
+          date_reported: fmtDate(String(acc.Date_Reported || '')),
+          account_holder_type: String(acc.AccountHoldertypeCode) === '1' ? 'Individual' : String(acc.AccountHoldertypeCode || ''),
+          payment_history: (() => {
+            const hist = acc.CAIS_Account_History || [];
+            const histArr = Array.isArray(hist) ? hist : [hist];
+            return histArr.map(h => ({
+              month: `${String(h.Month || '').padStart(2, '0')}/${h.Year || ''}`,
+              days_past_due: Number(h.Days_Past_Due || 0),
+              asset_classification: h.Asset_Classification || '',
+            }));
+          })(),
+        });
+      });
+    });
+    
+    return { personal, accounts: allAccounts, enquiries };
   } catch (e) {
     console.error('extractFullReport error:', e);
     return { personal: {}, accounts: [], enquiries: [] };

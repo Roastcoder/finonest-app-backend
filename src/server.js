@@ -121,6 +121,9 @@ app.listen(PORT, async () => {
         bank_id INTEGER NOT NULL REFERENCES banks(id) ON DELETE CASCADE,
         branch_name VARCHAR(255) NOT NULL,
         location VARCHAR(255),
+        latitude DECIMAL(10, 8),
+        longitude DECIMAL(11, 8),
+        digipin VARCHAR(20),
         geo_limit VARCHAR(50),
         product VARCHAR(255),
         sales_manager_name VARCHAR(255),
@@ -132,9 +135,21 @@ app.listen(PORT, async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✅ bank_branches table ready');
+    console.log('✅ bank_branches table ready with DIGIPIN support');
   } catch (err) {
-    console.error('❌ bank_branches table init failed:', err.message);
+    if (!err.message.includes('already exists')) {
+      console.error('❌ bank_branches table init failed:', err.message);
+    }
+  }
+
+  // Add DIGIPIN column if it doesn't exist
+  try {
+    await db.query('ALTER TABLE bank_branches ADD COLUMN IF NOT EXISTS digipin VARCHAR(20)');
+    console.log('✅ DIGIPIN column added to bank_branches');
+  } catch (err) {
+    if (!err.message.includes('already exists')) {
+      console.error('Note: DIGIPIN column migration:', err.message);
+    }
   }
 
   // Comprehensive column migrations

@@ -779,14 +779,93 @@ export const updateLoanStage = async (req, res) => {
             account_status: String(a.Account_Status) === '11' ? 'Active' : 'Closed',
           }));
 
-          // Auto link loan detection: check if selected financier matches any auto loan lender
+          // Auto link loan detection:
+          // A link loan exists when the selected financier has MORE THAN ONE auto loan
+          // (meaning the same lender financed multiple vehicles for this customer)
           const selectedFinancier = (loan.selected_financier || loan.financier_name || '').toLowerCase().trim();
-          const hasLinkLoan = selectedFinancier && autoLoans.some(al =>
-            (al.subscriber_name || '').toLowerCase().includes(selectedFinancier) ||
-            selectedFinancier.includes((al.subscriber_name || '').toLowerCase().split(' ')[0])
-          );
+          let hasLinkLoan = false;
+          if (selectedFinancier && autoLoans.length > 0) {
+            // Find loans from the selected financier
+            const financierLoans = autoLoans.filter(al => {
+              const lender = (al.subscriber_name || '').toLowerCase().trim();
+              const lenderWords = lender.split(/\s+/).filter(w => w.length >= 4);
+              const financierWords = selectedFinancier.split(/\s+/).filter(w => w.length >= 4);
+              return lenderWords.some(lw => financierWords.some(fw => lw.includes(fw) || fw.includes(lw)));
+            });
+            // Link loan = same lender has 2+ loans
+            hasLinkLoan = financierLoans.length > 1;
+          }
 
-          // Save everything to loan
+          // Parse full report into frontend-expected format
+          const result = creditData?.data?.result || {};
+          const allDetails = result?.CAIS_Account?.CAIS_Account_DETAILS || [];
+          const allAccounts = Array.isArray(allDetails) ? allDetails : [allDetails];
+          const firstHolder = allAccounts[0]?.CAIS_Holder_Details?.[0] || {};
+          const firstPhone = allAccounts[0]?.CAIS_Holder_Phone_Details?.[0] || {};
+          const fmtD = (raw) => { if (!raw) return ''; const s = String(raw).replace(/-/g,''); if (s.length!==8) return String(raw); return `${s.slice(6,8)}/${s.slice(4,6)}/${s.slice(0,4)}`; };
+          const ATYPE = {
+            '01':'AUTO LOAN','1':'AUTO LOAN',
+            '02':'HOME LOAN','2':'HOME LOAN',
+            '03':'PROPERTY LOAN','3':'PROPERTY LOAN',
+            '04':'LOAN AGAINST SHARES','4':'LOAN AGAINST SHARES',
+            '05':'PERSONAL LOAN','5':'PERSONAL LOAN',
+            '06':'CONSUMER LOAN','6':'CONSUMER LOAN',
+            '07':'GOLD LOAN','7':'GOLD LOAN',
+            '08':'EDUCATION LOAN','8':'EDUCATION LOAN',
+            '09':'LOAN TO PROFESSIONAL','9':'LOAN TO PROFESSIONAL',
+            '10':'CREDIT CARD','10':'CREDIT CARD',
+            '11':'LEASING','11':'LEASING',
+            '12':'OVERDRAFT','12':'OVERDRAFT',
+            '13':'TWO-WHEELER LOAN',
+            '14':'KISAN CREDIT CARD',
+            '15':'COMMERCIAL VEHICLE LOAN',
+            '16':'FLEET CARD',
+            '17':'COMMERCIAL VEHICLE LOAN',
+            '19':'SECURED CREDIT CARD',
+            '32':'USED CAR LOAN',
+            '33':'CONSTRUCTION EQUIPMENT LOAN',
+            '34':'TRACTOR LOAN',
+            '35':'STAFF LOAN',
+            '51':'BUSINESS LOAN',
+            '52':'BUSINESS LOAN - SMALL',
+            '53':'BUSINESS LOAN - AGRICULTURE',
+            '61':'BUSINESS LOAN - UNSECURED',
+            '69':'SHORT TERM PERSONAL LOAN',
+            '00':'OTHERS'
+          };
+          const parsedFullReport = {
+            personal: {
+              name: firstHolder.Surname_Non_Normalized || '',
+              dob: fmtD(firstHolder.Date_of_birth),
+              gender: firstHolder.Gender_Code === '1' ? 'Male' : firstHolder.Gender_Code === '2' ? 'Female' : '',
+              pan: firstHolder.Income_TAX_PAN || '',
+              mobile: firstPhone.Mobile_Telephone_Number || firstPhone.Telephone_Number || '',
+              email: firstPhone.EMailId || '',
+            },
+            accounts: allAccounts.filter(Boolean).map(a => ({
+              account_number: a.Account_Number || '',
+              subscriber_name: a.Subscriber_Name || '',
+              account_type: ATYPE[String(a.Account_Type)] || `Type ${a.Account_Type}`,
+              account_status: String(a.Account_Status) === '11' ? 'Active' : 'Closed',
+              sanctioned_amount: Number(a.Highest_Credit_or_Original_Loan_Amount || 0),
+              current_balance: Number(a.Current_Balance || 0),
+              amount_overdue: Number(a.Amount_Past_Due || 0),
+              emi_amount: Number(a.Scheduled_Monthly_Payment_Amount || 0),
+              open_date: fmtD(a.Open_Date),
+              close_date: fmtD(a.Date_Closed),
+              date_of_last_payment: fmtD(a.Date_of_Last_Payment),
+              date_reported: fmtD(a.Date_Reported),
+              account_holder_type: String(a.AccountHoldertypeCode) === '1' ? 'Individual' : (a.AccountHoldertypeCode || ''),
+              payment_history: (Array.isArray(a.CAIS_Account_History) ? a.CAIS_Account_History : [a.CAIS_Account_History]).filter(Boolean).map(h => ({
+                month: `${String(h.Month||'').padStart(2,'0')}/${h.Year||''}`,
+                days_past_due: Number(h.Days_Past_Due || 0),
+                asset_classification: h.Asset_Classification || '',
+              })),
+            })),
+            enquiries: [],
+          };
+
+          // Save parsed data to loan
           await db.query(
             `UPDATE loans SET
                bureau_score = $1,
@@ -798,8 +877,8 @@ export const updateLoanStage = async (req, res) => {
              WHERE id = $5`,
             [
               bureauScore,
-              JSON.stringify({ credit_score: bureauScore, auto_loans: autoLoans, full_report: creditData?.data?.result || {}, fetched_at: new Date().toISOString() }),
-              hasLinkLoan ? 'LINK LOAN EXIST' : 'NO LINK LOAN',
+              JSON.stringify({ credit_score: bureauScore, auto_loans: autoLoans, full_report: parsedFullReport, fetched_at: new Date().toISOString() }),
+              hasLinkLoan ? 'LINK LOAN EXIST' : null,
               JSON.stringify({ auto_loans: autoLoans, financier_checked: selectedFinancier, fetched_at: new Date().toISOString() }),
               loanId
             ]

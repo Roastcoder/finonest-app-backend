@@ -322,14 +322,24 @@ export const autoCheckForLoan = async (req, res) => {
 // Account_Status: "11" = Active, "13" = Closed, "15" = Settled
 const ACCOUNT_TYPE_NAMES = {
   '01': 'AUTO LOAN', '1': 'AUTO LOAN',
+  '02': 'HOME LOAN', '2': 'HOME LOAN',
   '05': 'PERSONAL LOAN', '5': 'PERSONAL LOAN',
   '06': 'CONSUMER LOAN', '6': 'CONSUMER LOAN',
+  '07': 'GOLD LOAN', '7': 'GOLD LOAN',
+  '08': 'EDUCATION LOAN', '8': 'EDUCATION LOAN',
+  '10': 'CREDIT CARD',
+  '11': 'LEASING',
+  '12': 'OVERDRAFT',
   '13': 'TWO-WHEELER LOAN',
+  '15': 'COMMERCIAL VEHICLE LOAN',
   '17': 'COMMERCIAL VEHICLE LOAN',
   '32': 'USED CAR LOAN',
   '33': 'CONSTRUCTION EQUIPMENT LOAN',
   '34': 'TRACTOR LOAN',
+  '51': 'BUSINESS LOAN',
+  '61': 'BUSINESS LOAN - UNSECURED',
   '69': 'SHORT TERM PERSONAL LOAN',
+  '00': 'OTHERS',
 };
 
 const AUTO_LOAN_TYPES = new Set(['01', '1', '13', '17', '32', '33', '34']);

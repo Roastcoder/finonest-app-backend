@@ -25,6 +25,14 @@ router.get('/debug/:id', (req, res) => {
   });
 });
 
+// Handle OPTIONS requests for CORS preflight
+router.options('/:id/download', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(200);
+});
+
 // Public document access routes (NO authentication required)
 router.get('/:id/download', downloadDocument); // Public access for document download
 router.get('/:id/preview', downloadDocument); // Public access for document preview

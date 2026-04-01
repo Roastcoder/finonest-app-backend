@@ -250,12 +250,18 @@ export const downloadDocument = async (req, res) => {
       case '.png': contentType = 'image/png'; break;
     }
 
-    // Add CORS headers for iframe preview
+    // Add CORS headers for iframe preview and Android WebView
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `inline; filename="${file_name}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    
+    // Get file size for Content-Length header
+    const stats = fs.statSync(resolvedPath);
+    res.setHeader('Content-Length', stats.size);
     
     // Stream the file
     const fileStream = fs.createReadStream(resolvedPath);

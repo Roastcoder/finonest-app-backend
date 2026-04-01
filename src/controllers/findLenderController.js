@@ -51,7 +51,8 @@ async function getDistanceBetweenCoordinates(lat1, lng1, lat2, lng2) {
 
     if (response.data.routes && response.data.routes.length > 0) {
       const distance = response.data.routes[0].distance;
-      return Math.round(distance / 1000); // meters to km
+      const distanceInKm = distance / 1000;
+      return parseFloat(distanceInKm.toFixed(2));
     }
     return null;
   } catch (error) {

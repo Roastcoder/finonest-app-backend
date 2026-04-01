@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllBanks, getBankById, createBank, updateBank, deleteBank, upload, getBankBranches, createBranch, updateBranch, deleteBranch } from '../controllers/bankController.js';
+import { getAllBanks, getBankById, createBank, updateBank, deleteBank, upload, getBankBranches, createBranch, updateBranch, deleteBranch, importBanksWithBranches } from '../controllers/bankController.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -12,6 +12,7 @@ router.use(authenticate);
 
 router.get('/:id', getBankById);
 router.post('/', authorize('admin', 'manager'), upload.single('logo'), createBank);
+router.post('/import/excel', authorize('admin', 'manager'), upload.single('file'), importBanksWithBranches);
 router.put('/:id', authorize('admin', 'manager'), upload.single('logo'), updateBank);
 router.delete('/:id', authorize('admin'), deleteBank);
 

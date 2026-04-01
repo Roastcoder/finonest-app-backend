@@ -2,6 +2,7 @@ import db from '../config/database.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import XLSX from 'xlsx';
 
 // Configure multer for logo uploads
 const storage = multer.diskStorage({
@@ -234,6 +235,90 @@ export const deleteBranch = async (req, res) => {
     if (result.rowCount === 0) return res.status(404).json({ error: 'Branch not found' });
     res.json({ message: 'Branch deleted successfully' });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const importBanksWithBranches = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (data.length === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Excel file is empty' });
+    }
+
+    const results = { success: 0, failed: 0, errors: [] };
+    const client = await db.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      for (const row of data) {
+        try {
+          const bankName = row['Bank Name']?.trim();
+          const branchName = row['Branch Name']?.trim();
+          const location = row['Location']?.trim() || null;
+          const geoLimit = row['Geo Limit'] ? parseInt(row['Geo Limit']) : null;
+          const product = row['Product']?.trim() || null;
+          const salesManagerName = row['Sales Manager Name']?.trim() || null;
+          const salesManagerMobile = row['Sales Manager Mobile']?.trim() || null;
+          const areaManagerName = row['Area Manager Name']?.trim() || null;
+          const areaManagerMobile = row['Area Manager Mobile']?.trim() || null;
+
+          if (!bankName || !branchName) {
+            results.failed++;
+            results.errors.push(`Row skipped: Bank Name and Branch Name are required`);
+            continue;
+          }
+
+          let bankResult = await client.query('SELECT id FROM banks WHERE name = $1', [bankName]);
+          let bankId;
+
+          if (bankResult.rows.length === 0) {
+            const newBankResult = await client.query(
+              `INSERT INTO banks (name, status) VALUES ($1, 'active') RETURNING id`,
+              [bankName]
+            );
+            bankId = newBankResult.rows[0].id;
+          } else {
+            bankId = bankResult.rows[0].id;
+          }
+
+          await client.query(
+            `INSERT INTO bank_branches (bank_id, branch_name, location, geo_limit, product, sales_manager_name, sales_manager_mobile, area_sales_manager_name, area_sales_manager_mobile, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
+            [bankId, branchName, location, geoLimit, product, salesManagerName, salesManagerMobile, areaManagerName, areaManagerMobile]
+          );
+
+          results.success++;
+        } catch (rowError) {
+          results.failed++;
+          results.errors.push(`Row error: ${rowError.message}`);
+        }
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: 'Import completed', ...results });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+      fs.unlinkSync(req.file.path);
+    }
+  } catch (error) {
+    console.error('importBanksWithBranches error:', error.message);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     res.status(500).json({ error: error.message });
   }
 };

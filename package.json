@@ -21,7 +21,8 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^3.3.2",
     "nodemailer": "^6.9.7",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

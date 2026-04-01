@@ -697,17 +697,120 @@ export const updateLoanStage = async (req, res) => {
     const extraVals = [];
 
     if (stageData.stage === 'LOGIN') {
-      // Handle alphanumeric app_score and credit_score
       const appScore = stageData.appScore || stageData.app_score || null;
       const creditScore = stageData.creditScore || stageData.credit_score || null;
-      
+
       extraCols.push('app_score', 'credit_score', 'login_date');
-      extraVals.push(
-        appScore, // Can be alphanumeric like 'A+', 'B1', '750', 'Good', etc.
-        creditScore, // Can be alphanumeric like 'A+', 'B1', '750', 'Excellent', etc.
-        stageData.loginDate || new Date().toISOString()
-      );
-      
+      extraVals.push(appScore, creditScore, stageData.loginDate || new Date().toISOString());
+
+      // Fire-and-forget: fetch credit report from Neokred and save all data + auto link loan tag
+      (async () => {
+        try {
+          const loanR = await db.query(
+            'SELECT applicant_name, mobile, vehicle_number, selected_financier, financier_name FROM loans WHERE id = $1',
+            [loanId]
+          );
+          if (!loanR.rows.length) return;
+          const loan = loanR.rows[0];
+          const name = (loan.applicant_name || '').trim();
+          const mobile = (loan.mobile || '').trim();
+          const rcUpper = (loan.vehicle_number || '').toUpperCase().trim();
+          if (!name || !mobile) return;
+
+          const nameParts = name.split(/\s+/);
+          const firstName = nameParts[0] || '';
+          const lastName = nameParts.slice(1).join(' ') || '';
+
+          // Check 90-day cache first
+          let creditData = null;
+          if (rcUpper) {
+            const cached = await db.query(
+              `SELECT credit_data FROM experian_credit_cache WHERE rc_number = $1 AND fetched_at > NOW() - INTERVAL '90 days'`,
+              [rcUpper]
+            );
+            if (cached.rows.length > 0) creditData = cached.rows[0].credit_data;
+          }
+
+          // Fetch fresh if not cached
+          if (!creditData) {
+            const { default: axios } = await import('axios');
+            const NEOKRED_URL = `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/experian-credit-report`;
+            const resp = await axios.post(NEOKRED_URL,
+              { mobile_no: mobile, first_name: firstName, last_name: lastName },
+              {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'client-user-id': process.env.KYC_CLIENT_USER_ID || '',
+                  'secret-key': process.env.KYC_SECRET_KEY || '',
+                  'access-key': process.env.KYC_ACCESS_KEY || '',
+                },
+                timeout: 30000
+              }
+            );
+            creditData = resp.data;
+            // Save to cache
+            if (rcUpper) {
+              await db.query(
+                `INSERT INTO experian_credit_cache (rc_number, mobile, first_name, last_name, credit_data, fetched_at, fetched_by)
+                 VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+                 ON CONFLICT (rc_number) DO UPDATE SET credit_data=$5, fetched_at=NOW(), fetched_by=$6`,
+                [rcUpper, mobile, firstName, lastName, JSON.stringify(creditData), req.user.id]
+              ).catch(() => {});
+            }
+          }
+
+          // Extract credit score
+          const bureauScore = Number(creditData?.data?.result?.SCORE?.BureauScore || 0) || null;
+
+          // Extract all auto loans
+          const AUTO_TYPES = new Set(['01','1','13','17','32','33','34']);
+          const details = creditData?.data?.result?.CAIS_Account?.CAIS_Account_DETAILS || [];
+          const accountsList = Array.isArray(details) ? details : [details];
+          const autoLoans = accountsList.filter(a => {
+            if (!a) return false;
+            const t = String(a.Account_Type || '');
+            return AUTO_TYPES.has(t) || AUTO_TYPES.has(t.replace(/^0+/, ''));
+          }).map(a => ({
+            account_number: a.Account_Number || '',
+            subscriber_name: a.Subscriber_Name || '',
+            account_type: a.Account_Type || '',
+            sanctioned_amount: Number(a.Highest_Credit_or_Original_Loan_Amount || 0),
+            current_balance: Number(a.Current_Balance || 0),
+            account_status: String(a.Account_Status) === '11' ? 'Active' : 'Closed',
+          }));
+
+          // Auto link loan detection: check if selected financier matches any auto loan lender
+          const selectedFinancier = (loan.selected_financier || loan.financier_name || '').toLowerCase().trim();
+          const hasLinkLoan = selectedFinancier && autoLoans.some(al =>
+            (al.subscriber_name || '').toLowerCase().includes(selectedFinancier) ||
+            selectedFinancier.includes((al.subscriber_name || '').toLowerCase().split(' ')[0])
+          );
+
+          // Save everything to loan
+          await db.query(
+            `UPDATE loans SET
+               bureau_score = $1,
+               credit_report_data = $2,
+               link_loan_checked = 'Yes',
+               link_loan_tag = $3,
+               link_loan_data = $4,
+               updated_at = NOW()
+             WHERE id = $5`,
+            [
+              bureauScore,
+              JSON.stringify({ credit_score: bureauScore, auto_loans: autoLoans, full_report: creditData?.data?.result || {}, fetched_at: new Date().toISOString() }),
+              hasLinkLoan ? 'LINK LOAN EXIST' : 'NO LINK LOAN',
+              JSON.stringify({ auto_loans: autoLoans, financier_checked: selectedFinancier, fetched_at: new Date().toISOString() }),
+              loanId
+            ]
+          ).catch(err => console.error('Save credit data error:', err.message));
+
+          console.log(`✅ LOGIN credit fetch done for loan ${loanId}: score=${bureauScore}, autoLoans=${autoLoans.length}, linkLoan=${hasLinkLoan}`);
+        } catch (err) {
+          console.error(`❌ LOGIN credit fetch failed for loan ${loanId}:`, err.message);
+        }
+      })();
+
       console.log('LOGIN stage - Scores updated:', { appScore, creditScore });
     } else if (stageData.stage === 'IN_PROCESS') {
       extraCols.push('tags');

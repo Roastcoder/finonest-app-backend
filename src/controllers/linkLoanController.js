@@ -2,7 +2,12 @@ import axios from 'axios';
 import db from '../config/database.js';
 
 const CACHE_DAYS = 90;
-const NEOKRED_API_URL = `${process.env.KYC_BASE_URL || 'https://profilex-api.neokred.tech'}/core-svc/api/v2/exp/experian-credit-report`;
+// Hardcoded Neokred credentials
+const NEOKRED_BASE_URL = 'https://profilex-api.neokred.tech/core-svc/api/v2/';
+const NEOKRED_CLIENT_ID = '8099a31a-608b-4200-8da7-05da0d5ef963';
+const NEOKRED_SECRET_KEY = '42d76782-84ba-4e4f-9721-76375f4dce4b';
+const NEOKRED_ACCESS_KEY = '7a41dfcf-b4f9-41a0-8af4-fc5929483f8f';
+const NEOKRED_API_URL = `${NEOKRED_BASE_URL}exp/experian-credit-report`;
 const ALLOWED_ROLES = ['admin', 'sales_manager', 'branch_manager'];
 
 // Ensure tables exist
@@ -48,9 +53,9 @@ async function callNeokredAPI(first_name, last_name, mobile) {
     {
       headers: {
         'Content-Type': 'application/json',
-        'client-user-id': process.env.KYC_CLIENT_USER_ID || '',
-        'secret-key': process.env.KYC_SECRET_KEY || '',
-        'access-key': process.env.KYC_ACCESS_KEY || '',
+        'client-user-id': NEOKRED_CLIENT_ID,
+        'secret-key': NEOKRED_SECRET_KEY,
+        'access-key': NEOKRED_ACCESS_KEY,
       },
       timeout: 30000
     }

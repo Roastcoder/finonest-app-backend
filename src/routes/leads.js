@@ -12,6 +12,7 @@ router.get('/', getAllLeads);
 router.get('/statistics', getStatusStatistics);
 router.post('/', auditLogger('leads', 'CREATE_LEAD'), createLead);
 
+// More specific routes BEFORE generic :id routes
 router.get('/:id/profile', getCustomerProfile);
 router.post('/:id/profile', auditLogger('customer_profiles', 'UPSERT_PROFILE'), upsertCustomerProfile);
 router.post('/:id/clone', auditLogger('leads', 'CLONE_LEAD'), cloneLead);
@@ -26,6 +27,7 @@ router.put('/:id/stage',
 );
 router.post('/validate-transition', validateStatusTransition);
 
+// Generic routes AFTER specific ones
 router.get('/:id', getLeadById);
 router.put('/:id', auditLogger('leads', 'UPDATE_LEAD'), updateLead);
 router.delete('/:id', auditLogger('leads', 'DELETE_LEAD'), deleteLead);

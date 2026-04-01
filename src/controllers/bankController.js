@@ -27,10 +27,42 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+const excelFileFilter = (req, file, cb) => {
+  const allowedMimes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv', 'application/csv'];
+  const fileName = file.originalname.toLowerCase();
+  const isValidExtension = fileName.endsWith('.xlsx') || fileName.endsWith('.xls') || fileName.endsWith('.csv');
+  
+  if (allowedMimes.includes(file.mimetype) || isValidExtension) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only Excel (.xlsx, .xls) or CSV files are allowed'), false);
+  }
+};
+
+const excelStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadPath = 'uploads/temp';
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath, { recursive: true });
+    }
+    cb(null, uploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'import-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
 export const upload = multer({ 
   storage, 
   fileFilter,
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+});
+
+export const excelUpload = multer({
+  storage: excelStorage,
+  fileFilter: excelFileFilter,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
 export const getAllBanks = async (req, res) => {
@@ -263,15 +295,15 @@ export const importBanksWithBranches = async (req, res) => {
 
       for (const row of data) {
         try {
-          const bankName = row['Bank Name']?.trim();
-          const branchName = row['Branch Name']?.trim();
-          const location = row['Location']?.trim() || null;
+          const bankName = row['Bank Name']?.toString().trim();
+          const branchName = row['Branch Name']?.toString().trim();
+          const location = row['Location']?.toString().trim() || null;
           const geoLimit = row['Geo Limit'] ? parseInt(row['Geo Limit']) : null;
-          const product = row['Product']?.trim() || null;
-          const salesManagerName = row['Sales Manager Name']?.trim() || null;
-          const salesManagerMobile = row['Sales Manager Mobile']?.trim() || null;
-          const areaManagerName = row['Area Manager Name']?.trim() || null;
-          const areaManagerMobile = row['Area Manager Mobile']?.trim() || null;
+          const product = row['Product']?.toString().trim() || null;
+          const salesManagerName = row['Sales Manager Name']?.toString().trim() || null;
+          const salesManagerMobile = row['Sales Manager Mobile']?.toString().trim() || null;
+          const areaManagerName = row['Area Manager Name']?.toString().trim() || null;
+          const areaManagerMobile = row['Area Manager Mobile']?.toString().trim() || null;
 
           if (!bankName || !branchName) {
             results.failed++;
@@ -292,11 +324,27 @@ export const importBanksWithBranches = async (req, res) => {
             bankId = bankResult.rows[0].id;
           }
 
-          await client.query(
-            `INSERT INTO bank_branches (bank_id, branch_name, location, geo_limit, product, sales_manager_name, sales_manager_mobile, area_sales_manager_name, area_sales_manager_mobile, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
-            [bankId, branchName, location, geoLimit, product, salesManagerName, salesManagerMobile, areaManagerName, areaManagerMobile]
+          // Check if branch already exists
+          const existingBranch = await client.query(
+            `SELECT id FROM bank_branches WHERE bank_id = $1 AND branch_name = $2`,
+            [bankId, branchName]
           );
+
+          if (existingBranch.rows.length > 0) {
+            // Update existing branch
+            await client.query(
+              `UPDATE bank_branches SET location=$1, geo_limit=$2, product=$3, sales_manager_name=$4, sales_manager_mobile=$5, area_sales_manager_name=$6, area_sales_manager_mobile=$7, status='active', updated_at=CURRENT_TIMESTAMP
+               WHERE id=$8`,
+              [location, geoLimit, product, salesManagerName, salesManagerMobile, areaManagerName, areaManagerMobile, existingBranch.rows[0].id]
+            );
+          } else {
+            // Insert new branch
+            await client.query(
+              `INSERT INTO bank_branches (bank_id, branch_name, location, geo_limit, product, sales_manager_name, sales_manager_mobile, area_sales_manager_name, area_sales_manager_mobile, status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active')`,
+              [bankId, branchName, location, geoLimit, product, salesManagerName, salesManagerMobile, areaManagerName, areaManagerMobile]
+            );
+          }
 
           results.success++;
         } catch (rowError) {

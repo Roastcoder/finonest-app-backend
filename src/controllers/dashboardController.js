@@ -9,7 +9,6 @@ export const getDashboardStats = async (req, res) => {
     let trackerDateFilter = '';
     let trackerParams = [];
 
-    // Helper for timeline logic
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
@@ -30,7 +29,6 @@ export const getDashboardStats = async (req, res) => {
       params = [startDate, endDate];
     }
 
-    // For the Top KPI cards (Monthly Tracker baseline)
     if (dateFilter) {
       trackerDateFilter = dateFilter;
       trackerParams = [...params];
@@ -39,7 +37,6 @@ export const getDashboardStats = async (req, res) => {
       trackerParams = [monthStart];
     }
 
-    // 1. Bank wise login (from loans table)
     const loginStats = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
       FROM loans l
@@ -49,7 +46,6 @@ export const getDashboardStats = async (req, res) => {
       ORDER BY 2 DESC
     `, params);
 
-    // 2. Bank wise Disbursements (from loans table)
     const disbursementBankWise = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
@@ -59,7 +55,6 @@ export const getDashboardStats = async (req, res) => {
       ORDER BY 2 DESC
     `, params);
 
-    // 2a. Financier wise Approved loans (NEW)
     const approvedBankWise = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
@@ -69,7 +64,6 @@ export const getDashboardStats = async (req, res) => {
       ORDER BY 2 DESC
     `, params);
 
-    // 3. PDD Tracker (abandoned loans)
     const pddTrackerRows = await db.query(`
       SELECT 
         CASE 
@@ -88,7 +82,6 @@ export const getDashboardStats = async (req, res) => {
     const pddTracker = {};
     pddTrackerRows.rows.forEach(r => pddTracker[r.bucket] = parseInt(r.count || 0));
 
-    // 4. Monthly Tracker (KPIs) - from loans table
     const monthlyTrackerQuery = await db.query(`
       SELECT 
         COUNT(CASE WHEN application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') THEN 1 END) as login_units,
@@ -103,7 +96,6 @@ export const getDashboardStats = async (req, res) => {
 
     const m = monthlyTrackerQuery.rows[0] || {};
 
-    // 5. Stage Breakdown (Funnel)
     const stageBreakdown = await db.query(`
       SELECT application_stage as stage, COUNT(*) as count 
       FROM loans l
@@ -112,7 +104,6 @@ export const getDashboardStats = async (req, res) => {
       ORDER BY 2 DESC
     `, params);
 
-    // 6. In Process Tags
     const inProcessTags = await db.query(`
       SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
       FROM loans l 
@@ -137,5 +128,59 @@ export const getDashboardStats = async (req, res) => {
   } catch (error) {
     console.error('CRITICAL: Dashboard stats error:', error);
     res.status(500).json({ error: error.message, stack: error.stack });
+  }
+};
+
+export const getConvertedLeads = async (req, res) => {
+  try {
+    const { timeline } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    if (timeline === 'today') {
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      dateFilter = `AND l.created_at >= $1`;
+      params.push(todayStart);
+    } else if (timeline === 'this_month') {
+      dateFilter = `AND l.created_at >= $1`;
+      params.push(monthStart);
+    }
+
+    const query = `
+      SELECT 
+        l.id,
+        l.loan_amount,
+        l.application_stage,
+        COALESCE(b.name, l.financier_name, 'Unassigned') as bank_name,
+        l.created_at,
+        COALESCE(l.customer_name, 'Customer ' || l.id) as customer_name
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      WHERE l.application_stage IN ('APPROVED', 'DISBURSED', 'IN_PROCESS', 'LOGIN', 'SUBMITTED')
+      ${dateFilter}
+      ORDER BY l.created_at DESC
+      LIMIT 100
+    `;
+
+    const result = await db.query(query, params);
+    
+    const convertedLeads = result.rows.map((row) => ({
+      id: row.id,
+      leadName: row.customer_name,
+      loanId: `LN${String(row.id).padStart(5, '0')}`,
+      loanAmount: parseInt(row.loan_amount || 0),
+      status: row.application_stage,
+      bankName: row.bank_name,
+      createdAt: row.created_at
+    }));
+
+    res.json(convertedLeads);
+  } catch (error) {
+    console.error('Converted leads error:', error);
+    res.status(500).json({ error: error.message });
   }
 };

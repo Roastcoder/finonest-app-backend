@@ -47,7 +47,9 @@ export const getAllLoans = async (req, res) => {
              l.stage_history,
              l.link_loan_checked,
              l.link_loan_tag,
-             l.link_loan_data
+             l.link_loan_data,
+             l.bureau_score,
+             l.credit_report_data
       FROM loans l
       LEFT JOIN users u ON l.assigned_to = u.id
       LEFT JOIN users creator ON l.created_by = creator.id

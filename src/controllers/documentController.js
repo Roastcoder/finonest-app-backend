@@ -3,6 +3,7 @@ import { buildUpdateQuery, toPostgresParams } from '../utils/postgres.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import sharp from 'sharp';
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -25,19 +26,49 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const allowedTypes = /jpeg|jpg|png|pdf|webp|bmp|gif|tiff/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
 
     if (mimetype && extname) {
       return cb(null, true);
     } else {
-      cb(new Error('Only .png, .jpg, .jpeg and .pdf files are allowed!'));
+      cb(new Error('Only image files (.png, .jpg, .jpeg, .webp, .bmp, .gif, .tiff) and .pdf are allowed!'));
     }
   }
 });
 
 export const uploadMiddleware = upload.single('document');
+
+// Helper function to convert image to JPEG
+const convertImageToJpeg = async (inputPath, outputPath) => {
+  try {
+    const ext = path.extname(inputPath).toLowerCase();
+    
+    // Only convert if it's not already JPEG
+    if (ext === '.jpg' || ext === '.jpeg') {
+      return inputPath; // Already JPEG, no conversion needed
+    }
+    
+    // Check if it's an image file
+    if (['.png', '.webp', '.bmp', '.gif', '.tiff'].includes(ext)) {
+      await sharp(inputPath)
+        .jpeg({ quality: 90, progressive: true })
+        .toFile(outputPath);
+      
+      // Delete original file
+      fs.unlinkSync(inputPath);
+      return outputPath;
+    }
+    
+    // If it's PDF or other format, return original path
+    return inputPath;
+  } catch (error) {
+    console.error('Image conversion error:', error);
+    // If conversion fails, return original path
+    return inputPath;
+  }
+};
 
 export const getAllDocuments = async (req, res) => {
   try {
@@ -131,11 +162,22 @@ export const uploadDocument = async (req, res) => {
       }
     }
 
+    // Convert image to JPEG if it's an image file
+    let finalFilePath = req.file.path;
+    let finalFileName = req.file.originalname;
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    
+    if (['.png', '.webp', '.bmp', '.gif', '.tiff'].includes(ext)) {
+      const jpegPath = req.file.path.replace(ext, '.jpg');
+      finalFilePath = await convertImageToJpeg(req.file.path, jpegPath);
+      finalFileName = path.basename(finalFilePath);
+    }
+
     const documentData = {
       document_type,
-      file_path: path.relative(process.cwd(), req.file.path),
-      file_name: req.file.originalname,
-      file_size: req.file.size,
+      file_path: path.relative(process.cwd(), finalFilePath),
+      file_name: finalFileName,
+      file_size: fs.statSync(finalFilePath).size,
       uploaded_by: req.user.id,
       status: 'pending',
       ...(lead_id ? { lead_id: parseInt(lead_id) } : {}),
@@ -151,8 +193,8 @@ export const uploadDocument = async (req, res) => {
     res.status(201).json({
       message: 'Document uploaded successfully',
       documentId: result.rows[0].id,
-      fileName: req.file.originalname,
-      fileSize: req.file.size
+      fileName: finalFileName,
+      fileSize: documentData.file_size
     });
   } catch (error) {
     console.error('Upload document error:', error);

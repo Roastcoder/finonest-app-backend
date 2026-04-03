@@ -37,6 +37,7 @@ import chatbotRoutes from './routes/chatbot.js';
 import linkLoanRoutes from './routes/linkLoan.js';
 import findLenderRoutes from './routes/findLender.js';
 import googleMapsProxyRoutes from './routes/googleMapsProxy.js';
+import loanDraftsRoutes from './routes/loanDrafts.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
@@ -63,6 +64,7 @@ app.use('/uploads', express.static('uploads'));
 app.use('/api/auth', authRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/loans', loanRoutes);
+app.use('/api/loan-drafts', loanDraftsRoutes);
 app.use('/api/banks', bankRoutes);
 app.use('/api/brokers', brokerRoutes);
 app.use('/api/users', userRoutes);
@@ -142,6 +144,38 @@ app.listen(PORT, async () => {
   } catch (err) {
     if (!err.message.includes('already exists')) {
       console.error('❌ bank_branches table init failed:', err.message);
+    }
+  }
+
+  // Create loan_drafts table if not exists
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS loan_drafts (
+        id SERIAL PRIMARY KEY,
+        lead_id INTEGER,
+        form_data JSONB NOT NULL,
+        assignment_data JSONB,
+        created_by INTEGER NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ loan_drafts table ready');
+    
+    // Drop the unique constraint on lead_id if it exists
+    try {
+      await db.query(`
+        ALTER TABLE loan_drafts DROP CONSTRAINT IF EXISTS loan_drafts_lead_id_key
+      `);
+      console.log('✅ Removed unique constraint on lead_id');
+    } catch (err) {
+      // Ignore if constraint doesn't exist
+    }
+  } catch (err) {
+    if (!err.message.includes('already exists')) {
+      console.error('❌ loan_drafts table init failed:', err.message);
     }
   }
 

@@ -642,6 +642,29 @@ export const upsertCustomerProfile = async (req, res) => {
       Object.entries(req.body).filter(([k]) => allowedFields.includes(k))
     );
 
+    // Clear opposite profile type fields
+    if (safeBody.profile_type === 'salaried') {
+      // Clear self-employed fields
+      safeBody.sub_type = null;
+      safeBody.business_name = null;
+      safeBody.business_vintage_years = null;
+      safeBody.professional_type = null;
+      safeBody.doctor_specialty = null;
+      safeBody.freelancer_type = null;
+      safeBody.practice_experience_years = null;
+      safeBody.itr_available = false;
+      safeBody.annual_income = null;
+    } else if (safeBody.profile_type === 'self_employed') {
+      // Clear salaried fields
+      safeBody.company_name = null;
+      safeBody.designation = null;
+      safeBody.current_job_experience_years = null;
+      safeBody.total_work_experience_years = null;
+      safeBody.net_monthly_salary = null;
+      safeBody.salary_credit_mode = null;
+      safeBody.salary_slip_available = false;
+    }
+
     const existing = await db.query('SELECT id FROM customer_profiles WHERE lead_id = $1', [leadId]);
     if (existing.rows.length === 0) {
       const { keys, values, params } = toPostgresParams({ ...safeBody, lead_id: leadId });

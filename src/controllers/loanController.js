@@ -61,8 +61,11 @@ export const getAllLoans = async (req, res) => {
     const values = [];
     
     if (req.user.role === 'executive') {
-      // Executive sirf apni loans dekhega
-      conditions.push('l.created_by = $1');
+      // Executive sees loans they created OR loans converted from their leads
+      conditions.push(`(
+        l.created_by = $1
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $1 OR assigned_to = $1)
+      )`);
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
       // Team leader sirf apni loans dekhega
@@ -166,7 +169,10 @@ export const getLoanById = async (req, res) => {
     
     // Apply role-based filtering for loan detail view
     if (req.user.role === 'executive') {
-      query += ' AND l.created_by = $2';
+      query += ` AND (
+        l.created_by = $2
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $2 OR assigned_to = $2)
+      )`;
       values.push(req.user.id);
     } else if (req.user.role === 'team_leader') {
       query += ' AND l.created_by = $2';

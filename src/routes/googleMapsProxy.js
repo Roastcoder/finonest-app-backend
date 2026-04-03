@@ -92,4 +92,32 @@ router.post('/geocode', authenticate, async (req, res) => {
   }
 });
 
+// Calculate distance using Google Maps Distance Matrix API
+router.post('/distance-matrix', authenticate, async (req, res) => {
+  try {
+    const { origins, destinations } = req.body;
+
+    if (!origins || !destinations) {
+      return res.status(400).json({ error: 'origins and destinations are required' });
+    }
+
+    // origins and destinations should be arrays of {lat, lng} objects
+    const originsStr = origins.map(o => `${o.lat},${o.lng}`).join('|');
+    const destinationsStr = destinations.map(d => `${d.lat},${d.lng}`).join('|');
+
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originsStr}&destinations=${destinationsStr}&key=${GOOGLE_MAPS_API_KEY}&mode=driving`;
+
+    const response = await axios.get(url);
+
+    if (response.data.rows && response.data.rows.length > 0) {
+      return res.json(response.data);
+    }
+
+    res.status(404).json({ error: 'Distance calculation failed' });
+  } catch (error) {
+    console.error('Google Distance Matrix error:', error.message);
+    res.status(500).json({ error: 'Failed to calculate distance' });
+  }
+});
+
 export default router;

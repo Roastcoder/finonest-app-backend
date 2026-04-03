@@ -1,7 +1,6 @@
 import db from '../config/database.js';
 import axios from 'axios';
 
-const OSRM_URL = process.env.OSRM_URL || 'http://router.project-osrm.org';
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
 
 async function geocodeAddress(address) {
@@ -41,23 +40,170 @@ async function geocodeAddress(address) {
 
 async function getDistanceBetweenCoordinates(lat1, lng1, lat2, lng2) {
   try {
-    const response = await axios.get(`${OSRM_URL}/route/v1/driving/${lng1},${lat1};${lng2},${lat2}`, {
+    const response = await axios.get('https://maps.googleapis.com/maps/api/distancematrix/json', {
       params: {
-        overview: 'full',
-        alternatives: 'false'
+        origins: `${lat1},${lng1}`,
+        destinations: `${lat2},${lng2}`,
+        key: GOOGLE_MAPS_API_KEY,
+        mode: 'driving',
+        units: 'metric'
       },
-      timeout: 5000
+      timeout: 10000
     });
 
-    if (response.data.routes && response.data.routes.length > 0) {
-      const distance = response.data.routes[0].distance;
-      const distanceInKm = distance / 1000;
-      return parseFloat(distanceInKm.toFixed(2));
+    if (response.data.rows && response.data.rows.length > 0) {
+      const element = response.data.rows[0].elements[0];
+      if (element.status === 'OK' && element.distance) {
+        const distanceInMeters = element.distance.value;
+        const distanceInKm = distanceInMeters / 1000;
+        return parseFloat(distanceInKm.toFixed(2));
+      }
     }
-    return null;
+    
+    // Fallback to Haversine formula for straight-line distance
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c;
+    return parseFloat(distance.toFixed(2));
   } catch (error) {
-    console.error('OSRM Distance error:', error.message);
-    return null;
+    console.error(`   ❌ [DISTANCE] Error: ${error.message}`);
+    // Fallback to Haversine formula
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c;
+    return parseFloat(distance.toFixed(2));
+  }
+}
+
+// Batch distance calculation using Google Distance Matrix API
+async function getBatchDistances(customerLat, customerLng, branches) {
+  try {
+    console.log(`\n   📍 [BATCH DISTANCE] Customer Location: lat=${customerLat}, lng=${customerLng}`);
+    
+    // Filter branches with valid coordinates
+    const validBranches = branches.filter(b => b.latitude && b.longitude);
+    
+    if (validBranches.length === 0) {
+      console.log(`   ⚠️  [BATCH DISTANCE] No branches with valid coordinates`);
+      return [];
+    }
+
+    console.log(`   📊 [BATCH DISTANCE] Processing ${validBranches.length} branches with coordinates\n`);
+
+    // Google Distance Matrix API supports up to 25 destinations per request
+    const BATCH_SIZE = 25;
+    const results = [];
+
+    for (let i = 0; i < validBranches.length; i += BATCH_SIZE) {
+      const batch = validBranches.slice(i, i + BATCH_SIZE);
+      const destinations = batch.map(b => `${b.latitude},${b.longitude}`).join('|');
+
+      console.log(`   📦 [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] Processing ${batch.length} branches...`);
+      console.log(`   🎯 [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] Origin: ${customerLat},${customerLng}`);
+      console.log(`   🎯 [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] First destination: ${batch[0].latitude},${batch[0].longitude} (${batch[0].branch_name})`);
+
+      try {
+        const url = 'https://maps.googleapis.com/maps/api/distancematrix/json';
+        const params = {
+          origins: `${customerLat},${customerLng}`,
+          destinations: destinations,
+          key: GOOGLE_MAPS_API_KEY,
+          mode: 'driving',
+          units: 'metric',
+          language: 'en'
+        };
+
+        console.log(`   🌐 [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] Calling Google Distance Matrix API...`);
+        
+        const response = await axios.get(url, {
+          params: params,
+          timeout: 15000
+        });
+
+        console.log(`   ✅ [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] API Response Status: ${response.data.status}`);
+
+        if (response.data.status !== 'OK') {
+          console.error(`   ❌ [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] API Error: ${response.data.status} - ${response.data.error_message || 'No error message'}`);
+          throw new Error(`Google API returned status: ${response.data.status}`);
+        }
+
+        if (response.data.rows && response.data.rows.length > 0) {
+          const elements = response.data.rows[0].elements;
+          
+          batch.forEach((branch, idx) => {
+            const element = elements[idx];
+            let distance = null;
+
+            if (element && element.status === 'OK' && element.distance) {
+              const distanceInMeters = element.distance.value;
+              distance = parseFloat((distanceInMeters / 1000).toFixed(2));
+              console.log(`      ✅ ${branch.branch_name}: ${distance} km (${element.distance.text})`);
+            } else {
+              console.log(`      ⚠️  ${branch.branch_name}: API status = ${element?.status || 'UNKNOWN'}`);
+              // Fallback to Haversine
+              const R = 6371;
+              const dLat = (branch.latitude - customerLat) * Math.PI / 180;
+              const dLng = (branch.longitude - customerLng) * Math.PI / 180;
+              const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                        Math.cos(customerLat * Math.PI / 180) * Math.cos(branch.latitude * Math.PI / 180) *
+                        Math.sin(dLng/2) * Math.sin(dLng/2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+              distance = parseFloat((R * c).toFixed(2));
+              console.log(`      🔄 ${branch.branch_name}: ${distance} km (straight-line fallback)`);
+            }
+
+            results.push({
+              ...branch,
+              distance: distance
+            });
+          });
+        }
+      } catch (batchError) {
+        console.error(`   ❌ [BATCH ${Math.floor(i/BATCH_SIZE) + 1}] Error: ${batchError.message}`);
+        // Fallback for entire batch
+        batch.forEach(branch => {
+          const R = 6371;
+          const dLat = (branch.latitude - customerLat) * Math.PI / 180;
+          const dLng = (branch.longitude - customerLng) * Math.PI / 180;
+          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(customerLat * Math.PI / 180) * Math.cos(branch.latitude * Math.PI / 180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const distance = parseFloat((R * c).toFixed(2));
+          
+          console.log(`      🔄 ${branch.branch_name}: ${distance} km (error fallback)`);
+          
+          results.push({
+            ...branch,
+            distance: distance
+          });
+        });
+      }
+
+      // Small delay between batches to avoid rate limiting
+      if (i + BATCH_SIZE < validBranches.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+
+    console.log(`\n   ✅ [BATCH DISTANCE] Completed processing all branches\n`);
+    return results;
+  } catch (error) {
+    console.error(`❌ [BATCH DISTANCE] Fatal Error: ${error.message}`);
+    return branches.map(branch => ({
+      ...branch,
+      distance: null
+    }));
   }
 }
 
@@ -201,31 +347,26 @@ export const findLendersByAddress = async (req, res) => {
     console.log(`   📦 Branches using cached DB coordinates: ${branches.length - apiCallsCount}\n`);
 
     // Calculate distances and filter
-    console.log(`🔍 [FIND LENDER] Step 4: Calculating distances using OSRM...`);
-    const lendersWithDistance = await Promise.all(
-      processedBranches.map(async (branch) => {
-        let distance = null;
-
-        if (branch.latitude && branch.longitude) {
-          distance = await getDistanceBetweenCoordinates(
-            customerCoords.lat,
-            customerCoords.lng,
-            branch.latitude,
-            branch.longitude
-          );
-        }
-
-        const branchGeoLimit = parseGeoLimit(branch.geo_limit);
-        const isWithinServiceArea = distance !== null && branchGeoLimit && distance <= branchGeoLimit;
-
-        return {
-          ...branch,
-          distance: distance,
-          geo_limit_km: branchGeoLimit,
-          within_radius: isWithinServiceArea
-        };
-      })
+    console.log(`🔍 [FIND LENDER] Step 4: Calculating distances using Google Maps Distance Matrix API (Batch Mode)...`);
+    
+    // Use batch distance calculation for better performance
+    const branchesWithDistance = await getBatchDistances(
+      customerCoords.lat,
+      customerCoords.lng,
+      processedBranches
     );
+
+    // Add geo limit info and filter
+    const lendersWithDistance = branchesWithDistance.map(branch => {
+      const branchGeoLimit = parseGeoLimit(branch.geo_limit);
+      const isWithinServiceArea = branch.distance !== null && branchGeoLimit && branch.distance <= branchGeoLimit;
+
+      return {
+        ...branch,
+        geo_limit_km: branchGeoLimit,
+        within_radius: isWithinServiceArea
+      };
+    });
 
     // Filter branches within radius
     let filtered = lendersWithDistance.filter(l => l.within_radius && l.distance !== null);
@@ -369,31 +510,24 @@ export const findLendersNearby = async (req, res) => {
       banksMap[bank.id] = bank;
     });
 
-    const lendersWithDistance = await Promise.all(
-      branches.map(async (branch) => {
-        let distance = null;
-        if (branch.latitude && branch.longitude) {
-          distance = await getDistanceBetweenCoordinates(
-            latitude,
-            longitude,
-            branch.latitude,
-            branch.longitude
-          );
-        }
-
-        const branchGeoLimit = parseGeoLimit(branch.geo_limit);
-        const effectiveLimit = branchGeoLimit || radius;
-
-        return {
-          ...branch,
-          distance: distance,
-          geo_limit_km: branchGeoLimit,
-          within_radius: distance !== null && distance <= Math.min(radius, effectiveLimit)
-        };
-      })
+    const lendersWithDistance = await getBatchDistances(
+      latitude,
+      longitude,
+      branches
     );
 
-    let filtered = lendersWithDistance.filter(l => l.within_radius);
+    // Add geo limit info and filter
+    const filtered = lendersWithDistance.map(branch => {
+      const branchGeoLimit = parseGeoLimit(branch.geo_limit);
+      const effectiveLimit = branchGeoLimit || radius;
+      const within_radius = branch.distance !== null && branch.distance <= Math.min(radius, effectiveLimit);
+
+      return {
+        ...branch,
+        geo_limit_km: branchGeoLimit,
+        within_radius: within_radius
+      };
+    }).filter(l => l.within_radius);
 
     if (case_type) {
       filtered = filtered.filter(branch => {

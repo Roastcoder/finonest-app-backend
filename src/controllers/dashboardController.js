@@ -37,11 +37,30 @@ export const getDashboardStats = async (req, res) => {
       trackerParams = [monthStart];
     }
 
+    // Executive filter: sirf apni loans dikhaye (created by them OR converted from their leads)
+    let executiveFilter = '';
+    if (req.user.role === 'executive') {
+      const paramIndex = params.length + 1;
+      executiveFilter = `AND (
+        l.created_by = $${paramIndex}
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${paramIndex} OR assigned_to = $${paramIndex})
+      )`;
+      params.push(req.user.id);
+      
+      // Tracker params ke liye bhi add karo
+      const trackerParamIndex = trackerParams.length + 1;
+      trackerDateFilter += ` AND (
+        created_by = $${trackerParamIndex}
+        OR lead_id IN (SELECT id FROM leads WHERE created_by = $${trackerParamIndex} OR assigned_to = $${trackerParamIndex})
+      )`;
+      trackerParams.push(req.user.id);
+    }
+
     const loginStats = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter}
+      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter} ${executiveFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -50,7 +69,7 @@ export const getDashboardStats = async (req, res) => {
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage = 'DISBURSED' ${dateFilter}
+      WHERE l.application_stage = 'DISBURSED' ${dateFilter} ${executiveFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -59,7 +78,7 @@ export const getDashboardStats = async (req, res) => {
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage = 'APPROVED' ${dateFilter}
+      WHERE l.application_stage = 'APPROVED' ${dateFilter} ${executiveFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -75,7 +94,7 @@ export const getDashboardStats = async (req, res) => {
         END as bucket,
         COUNT(*) as count
       FROM loans l
-      WHERE l.application_stage = 'REJECTED' ${dateFilter} 
+      WHERE l.application_stage = 'REJECTED' ${dateFilter} ${executiveFilter}
       GROUP BY 1
     `, params);
 
@@ -99,7 +118,7 @@ export const getDashboardStats = async (req, res) => {
     const stageBreakdown = await db.query(`
       SELECT application_stage as stage, COUNT(*) as count 
       FROM loans l
-      WHERE 1=1 ${dateFilter}
+      WHERE 1=1 ${dateFilter} ${executiveFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -107,7 +126,7 @@ export const getDashboardStats = async (req, res) => {
     const inProcessTags = await db.query(`
       SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
       FROM loans l 
-      WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} 
+      WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} ${executiveFilter}
       GROUP BY 1
     `, params);
 

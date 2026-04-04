@@ -35,3 +35,49 @@ export const getAllAuditLogs = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+export const deleteAuditLogsByDateRange = async (req, res) => {
+  try {
+    const { fromDate, toDate } = req.body;
+
+    if (!fromDate) {
+      return res.status(400).json({ error: 'fromDate is required' });
+    }
+
+    // Default toDate to today if not provided
+    const endDate = toDate || new Date().toISOString().split('T')[0];
+
+    // Validate dates
+    const from = new Date(fromDate);
+    const to = new Date(endDate);
+
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' });
+    }
+
+    if (from > to) {
+      return res.status(400).json({ error: 'fromDate cannot be after toDate' });
+    }
+
+    // Delete logs within the date range
+    const query = `
+      DELETE FROM audit_logs 
+      WHERE created_at >= $1 AND created_at <= $2
+      RETURNING id
+    `;
+
+    const result = await db.query(query, [fromDate, endDate + ' 23:59:59']);
+
+    console.log(`Deleted ${result.rowCount} audit logs from ${fromDate} to ${endDate}`);
+
+    res.json({
+      success: true,
+      deletedCount: result.rowCount,
+      fromDate,
+      toDate: endDate
+    });
+  } catch (error) {
+    console.error('Delete audit logs error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};

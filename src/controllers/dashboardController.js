@@ -150,6 +150,17 @@ export const getConvertedLeads = async (req, res) => {
       params.push(monthStart);
     }
 
+    // Executive filter: sirf apni converted leads dikhaye
+    let executiveFilter = '';
+    if (req.user.role === 'executive') {
+      const paramIndex = params.length + 1;
+      executiveFilter = `AND (
+        l.created_by = $${paramIndex}
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${paramIndex} OR assigned_to = $${paramIndex})
+      )`;
+      params.push(req.user.id);
+    }
+
     const query = `
       SELECT 
         l.id,
@@ -162,6 +173,7 @@ export const getConvertedLeads = async (req, res) => {
       LEFT JOIN banks b ON l.bank_id = b.id
       WHERE l.application_stage IN ('APPROVED', 'DISBURSED', 'IN_PROCESS', 'LOGIN', 'SUBMITTED')
       ${dateFilter}
+      ${executiveFilter}
       ORDER BY l.created_at DESC
       LIMIT 100
     `;

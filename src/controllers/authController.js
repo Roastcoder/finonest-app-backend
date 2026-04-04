@@ -29,6 +29,7 @@ export const photoUploadMiddleware = photoUpload.single('photo');
 
 // In-memory OTP store: { phone: { otp, expiresAt } }
 const mobileOtpStore = new Map();
+const mpinOtpStore = new Map();
 
 const sendSarvSms = (phone, otp) => {
   return new Promise((resolve, reject) => {
@@ -117,6 +118,73 @@ export const verifyMobileOtp = async (req, res) => {
   } catch (error) {
     console.error('Verify mobile OTP error:', error);
     res.status(500).json({ success: false, error: 'Failed to verify OTP' });
+  }
+};
+
+export const forgotMpin = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || !/^[6-9]\d{9}$/.test(phone)) {
+      return res.status(400).json({ success: false, message: 'Invalid mobile number' });
+    }
+    
+    // Check if user exists
+    const userResult = await db.query('SELECT id FROM users WHERE phone = $1', [phone]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Phone number not registered' });
+    }
+    
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    mpinOtpStore.set(phone, { otp, expiresAt: Date.now() + 3 * 60 * 1000 });
+    
+    await sendSarvSms(phone, otp);
+    console.log(`MPIN Reset OTP sent to ${phone}: ${otp}`);
+    
+    res.json({ success: true, message: 'OTP sent successfully' });
+  } catch (error) {
+    console.error('Forgot MPIN error:', error);
+    res.status(500).json({ success: false, message: 'Failed to send OTP' });
+  }
+};
+
+export const resetMpin = async (req, res) => {
+  try {
+    const { phone, otp, newMpin } = req.body;
+    
+    if (!phone || !otp || !newMpin) {
+      return res.status(400).json({ success: false, message: 'Phone, OTP, and new MPIN are required' });
+    }
+    
+    if (newMpin.length !== 4 || !/^\d{4}$/.test(newMpin)) {
+      return res.status(400).json({ success: false, message: 'MPIN must be 4 digits' });
+    }
+    
+    // Verify OTP
+    const record = mpinOtpStore.get(phone);
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'OTP not found. Please request a new OTP.' });
+    }
+    
+    if (Date.now() > record.expiresAt) {
+      mpinOtpStore.delete(phone);
+      return res.status(400).json({ success: false, message: 'OTP has expired. Please request a new OTP.' });
+    }
+    
+    if (record.otp !== otp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
+    }
+    
+    // Hash new MPIN and update
+    const hashedMpin = await bcrypt.hash(newMpin, 10);
+    await db.query('UPDATE users SET password = $1 WHERE phone = $2', [hashedMpin, phone]);
+    
+    mpinOtpStore.delete(phone);
+    console.log(`MPIN reset successfully for ${phone}`);
+    
+    res.json({ success: true, message: 'MPIN reset successfully' });
+  } catch (error) {
+    console.error('Reset MPIN error:', error);
+    res.status(500).json({ success: false, message: 'Failed to reset MPIN' });
   }
 };
 

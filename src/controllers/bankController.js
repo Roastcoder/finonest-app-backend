@@ -299,7 +299,21 @@ export const importBanksWithBranches = async (req, res) => {
           const branchName = row['Branch Name']?.toString().trim();
           const location = row['Location']?.toString().trim() || null;
           const geoLimit = row['Geo Limit'] ? parseInt(row['Geo Limit']) : null;
-          const product = row['Product']?.toString().trim() || null;
+
+          // Build product from individual Yes/No columns
+          const PRODUCTS = [
+            'New Car - Purchase',
+            'Used Car - Purchase',
+            'Used Car - Refinance',
+            'Used Car - Top-up',
+            'Used Car - BT'
+          ];
+          const selectedProducts = PRODUCTS.filter(p => {
+            const val = row[p]?.toString().trim().toLowerCase();
+            return val === 'yes' || val === 'y';
+          });
+          const product = selectedProducts.length > 0 ? selectedProducts.join(', ') : (row['Product']?.toString().trim() || null);
+
           const salesManagerName = row['Sales Manager Name']?.toString().trim() || null;
           const salesManagerMobile = row['Sales Manager Mobile']?.toString().trim() || null;
           const areaManagerName = row['Area Manager Name']?.toString().trim() || null;

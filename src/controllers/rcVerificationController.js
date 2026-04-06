@@ -61,7 +61,13 @@ export const verifyRC = async (req, res) => {
       return res.status(400).json({ error: 'RC number is required' });
     }
 
-    const rcNumberUpper = rc_number.toUpperCase();
+    const rcNumberUpper = rc_number.toUpperCase().trim();
+    
+    console.log(`\n🔍 RC Verification Request:`);
+    console.log(`Original input: "${rc_number}"`);
+    console.log(`Uppercase: "${rcNumberUpper}"`);
+    console.log(`Length: ${rcNumberUpper.length}`);
+    console.log(`Has spaces: ${rcNumberUpper.includes(' ')}`);
 
     // Step 1: Check DB cache first
     const cached = await db.query('SELECT rc_data, challan_data, api_type FROM rc_cache WHERE rc_number = $1', [rcNumberUpper]);
@@ -81,57 +87,66 @@ export const verifyRC = async (req, res) => {
     let rcData = null;
     let apiType = null;
 
-    // Step 2: Try non-masked API first
-    try {
-      console.log(`Trying non-masked API for RC ${rcNumberUpper}`);
-      const fullResponse = await fetch('https://kyc-api.surepass.io/api/v1/rc/rc-full', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${SUREPASS_TOKEN}`
-        },
-        body: JSON.stringify({ id_number: rc_number })
-      });
-
-      const fullData = await fullResponse.json();
-
-      if (fullData.success && fullData.data) {
-        console.log(`Non-masked API success for RC ${rcNumberUpper}`);
-        rcData = fullData;
-        apiType = 'non-masked';
-      } else {
-        console.log(`Non-masked API failed for RC ${rcNumberUpper}:`, fullData.message);
+    // Helper function to retry API with exponential backoff
+    const retryApi = async (url, name, maxRetries = 2) => {
+      for (let i = 1; i <= maxRetries; i++) {
+        try {
+          console.log(`\n📡 Attempt ${i}/${maxRetries} - ${name}`);
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${SUREPASS_TOKEN}`
+            },
+            body: JSON.stringify({ id_number: rcNumberUpper })
+          });
+          const data = await response.json();
+          
+          // Check for backend down error
+          if (data.status_code === 500 && (data.message_code === 'backend_down' || data.message?.includes('Timed Out'))) {
+            console.log(`⚠️ Surepass backend issue: ${data.message}`);
+            if (i < maxRetries) {
+              const wait = i * 2000;
+              console.log(`⏳ Retrying in ${wait/1000}s...`);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            return null;
+          }
+          
+          if (data.success && data.data) {
+            console.log(`✅ ${name} success`);
+            return data;
+          }
+          console.log(`❌ ${name} failed: ${data.message}`);
+          return null;
+        } catch (err) {
+          console.error(`❌ ${name} error:`, err.message);
+          if (i < maxRetries) await new Promise(r => setTimeout(r, i * 2000));
+        }
       }
-    } catch (fullError) {
-      console.error('Non-masked API error:', fullError.message);
+      return null;
+    };
+
+    // Try non-masked API
+    const fullData = await retryApi('https://kyc-api.surepass.io/api/v1/rc/rc-full', 'RC Full API');
+    if (fullData) {
+      rcData = fullData;
+      apiType = 'non-masked';
     }
 
-    // Step 3: Only if non-masked failed, try masked API
+    // Try masked API if full failed
     if (!rcData) {
-      try {
-        console.log(`Trying masked API for RC ${rcNumberUpper}`);
-        const maskedResponse = await fetch('https://kyc-api.surepass.io/api/v1/rc/rc-lite', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${SUREPASS_TOKEN}`
-          },
-          body: JSON.stringify({ id_number: rc_number })
+      const maskedData = await retryApi('https://kyc-api.surepass.io/api/v1/rc/rc-lite', 'RC Lite API');
+      if (maskedData) {
+        rcData = maskedData;
+        apiType = 'masked';
+      } else {
+        return res.status(503).json({ 
+          error: 'Surepass API temporarily unavailable', 
+          message: 'Please try again in a few minutes or enter vehicle details manually',
+          rc_number: rcNumberUpper
         });
-
-        const maskedData = await maskedResponse.json();
-
-        if (maskedData.success && maskedData.data) {
-          console.log(`Masked API success for RC ${rcNumberUpper}`);
-          rcData = maskedData;
-          apiType = 'masked';
-        } else {
-          console.log(`Masked API also failed for RC ${rcNumberUpper}:`, maskedData.message);
-          return res.status(400).json({ error: 'Failed to fetch RC details', data: maskedData });
-        }
-      } catch (maskedError) {
-        console.error('Masked API error:', maskedError.message);
-        return res.status(500).json({ error: 'Both non-masked and masked APIs failed' });
       }
     }
 

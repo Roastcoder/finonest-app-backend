@@ -141,6 +141,15 @@ export const verifyRC = async (req, res) => {
       if (maskedData) {
         rcData = maskedData;
         apiType = 'masked';
+      }
+    }
+
+    // Try rc-v2 API if both failed (works for BH-series and other special numbers)
+    if (!rcData) {
+      const v2Data = await retryApi('https://kyc-api.surepass.io/api/v1/rc/rc-v2', 'RC V2 API');
+      if (v2Data) {
+        rcData = v2Data;
+        apiType = 'v2-masked';
       } else {
         return res.status(503).json({ 
           error: 'Surepass API temporarily unavailable', 

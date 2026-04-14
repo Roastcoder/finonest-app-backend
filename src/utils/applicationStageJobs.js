@@ -202,16 +202,31 @@ const processPendingJobs = async () => {
     
     for (const job of result.rows) {
       try {
+        const metadata = job.metadata ? JSON.parse(job.metadata) : {};
+        const tableType = metadata.tableType || 'leads';
+        
         switch (job.job_type) {
-          case 'AUTO_CANCEL_APPROVAL':
-            await applicationStageLogic.updateLeadApplicationStage(
-              job.reference_id,
-              applicationStageLogic.APPLICATION_STAGES.CANCELLED,
-              {
-                remarks: 'Auto-cancelled: Not disbursed within 30 days of approval'
-              },
-              'SYSTEM'
-            );
+          case 'AUTO_LOGIN_TRANSITION':
+            // Auto-transition from SUBMITTED to LOGIN after 24 hours
+            if (tableType === 'leads') {
+              await applicationStageLogic.updateLeadApplicationStage(
+                job.reference_id,
+                applicationStageLogic.APPLICATION_STAGES.LOGIN,
+                {
+                  remarks: 'Auto-transitioned to LOGIN stage after 24 hours'
+                },
+                'SYSTEM'
+              );
+            } else {
+              await applicationStageLogic.updateLoanApplicationStage(
+                job.reference_id,
+                applicationStageLogic.APPLICATION_STAGES.LOGIN,
+                {
+                  remarks: 'Auto-transitioned to LOGIN stage after 24 hours'
+                },
+                'SYSTEM'
+              );
+            }
             
             await db.query(`
               UPDATE scheduled_jobs 
@@ -219,7 +234,37 @@ const processPendingJobs = async () => {
               WHERE id = $1
             `, [job.id]);
             
-            console.log(`Executed auto-cancellation for lead ${job.reference_id}`);
+            console.log(`Executed auto-login transition for ${tableType} ${job.reference_id}`);
+            break;
+            
+          case 'AUTO_CANCEL_APPROVAL':
+            if (tableType === 'leads') {
+              await applicationStageLogic.updateLeadApplicationStage(
+                job.reference_id,
+                applicationStageLogic.APPLICATION_STAGES.CANCELLED,
+                {
+                  remarks: 'Auto-cancelled: Not disbursed within 30 days of approval'
+                },
+                'SYSTEM'
+              );
+            } else {
+              await applicationStageLogic.updateLoanApplicationStage(
+                job.reference_id,
+                applicationStageLogic.APPLICATION_STAGES.CANCELLED,
+                {
+                  remarks: 'Auto-cancelled: Not disbursed within 30 days of approval'
+                },
+                'SYSTEM'
+              );
+            }
+            
+            await db.query(`
+              UPDATE scheduled_jobs 
+              SET status = 'COMPLETED', executed_at = NOW() 
+              WHERE id = $1
+            `, [job.id]);
+            
+            console.log(`Executed auto-cancellation for ${tableType} ${job.reference_id}`);
             break;
             
           default:

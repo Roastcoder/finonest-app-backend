@@ -1,8 +1,9 @@
 import express from 'express';
-import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoan, updateLoanStage } from '../controllers/loanController.js';
+import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoan, updateLoanStage, getBurstTable } from '../controllers/loanController.js';
 import { authenticate } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 import { uploadMiddleware, uploadDocument } from '../controllers/documentController.js';
+import { toPostgresParams } from '../utils/postgres.js';
 import db from '../config/database.js';
 
 const router = express.Router();
@@ -10,6 +11,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/', getAllLoans);
+router.get('/burst-table', getBurstTable);
 router.get('/:id/documents', async (req, res) => {
   try {
     const loanResult = await db.query('SELECT lead_id FROM loans WHERE id = $1', [req.params.id]);
@@ -70,6 +72,101 @@ router.get('/:id/documents', async (req, res) => {
   }
 });
 router.post('/:id/documents', uploadMiddleware, uploadDocument);
+router.post('/:id/convert-to-lead', async (req, res) => {
+  try {
+    const loanId = req.params.id;
+    
+    // Get loan data
+    const loanResult = await db.query('SELECT * FROM loans WHERE id = $1', [loanId]);
+    if (loanResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Loan not found' });
+    }
+    
+    const loan = loanResult.rows[0];
+    
+    // Generate customer_id for new lead
+    const userResult = await db.query('SELECT COALESCE(full_name, user_id, \'US\') as user_name FROM users WHERE id = $1', [req.user.id]);
+    const userName = userResult.rows[0]?.user_name || 'User';
+    const userInitials = userName.substring(0, 2).toUpperCase();
+    const customerInitial = (loan.applicant_name || 'C').charAt(0).toUpperCase();
+    
+    const seqResult = await db.query(
+      `SELECT COALESCE(MAX(CAST(SUBSTRING(customer_id FROM '\\d+$') AS INTEGER)), 0) + 1 as next_seq
+       FROM leads WHERE created_by = $1 AND customer_id ~ '^[A-Z]{2}[A-Z]\\d+$'`,
+      [req.user.id]
+    );
+    let seq = seqResult.rows[0]?.next_seq || 1;
+    const customerId = `${userInitials}${customerInitial}${String(seq).padStart(3, '0')}`;
+    
+    // Create lead from loan data
+    const leadData = {
+      customer_id: customerId,
+      customer_name: loan.applicant_name,
+      phone: loan.mobile,
+      loan_amount_required: loan.loan_amount,
+      vehicle_number: loan.vehicle_number,
+      current_address: loan.current_address || loan.address,
+      current_landmark: loan.current_landmark || loan.landmark,
+      city: loan.current_district || loan.city,
+      state: loan.current_state || loan.state,
+      pincode: loan.current_pincode || loan.pincode,
+      pan_number: loan.pan_number,
+      case_type: loan.case_type,
+      financier_id: loan.bank_id,
+      stage: 'lead',
+      status: 'new',
+      source: 'converted_from_loan',
+      notes: `Converted from loan ${loan.loan_number || loan.id}`,
+      created_by: req.user.id,
+      assigned_to: loan.assigned_to || req.user.id,
+      application_stage: 'SUBMITTED',
+      stage_data: {
+        stage: 'SUBMITTED',
+        submittedAt: new Date().toISOString(),
+        submittedBy: req.user.id
+      },
+      stage_history: [{
+        stage: 'SUBMITTED',
+        submittedAt: new Date().toISOString(),
+        submittedBy: req.user.id,
+        action: 'Converted from loan'
+      }],
+      converted_to_loan: false
+    };
+    
+    // Filter out null/undefined values
+    const filteredData = Object.fromEntries(
+      Object.entries(leadData).filter(([_, value]) => value !== null && value !== undefined && value !== '')
+    );
+    
+    const { keys, values, params } = toPostgresParams(filteredData);
+    const leadResult = await db.query(
+      `INSERT INTO leads (${keys.join(', ')}) VALUES (${params}) RETURNING id`,
+      values
+    );
+    
+    const newLeadId = leadResult.rows[0].id;
+    
+    // Update documents to point to new lead
+    await db.query(
+      'UPDATE documents SET lead_id = $1, loan_id = NULL WHERE loan_id = $2',
+      [newLeadId, loanId]
+    );
+    
+    // Delete the loan
+    await db.query('DELETE FROM loans WHERE id = $1', [loanId]);
+    
+    res.json({ 
+      success: true, 
+      leadId: newLeadId,
+      customerId: customerId,
+      message: 'Loan converted to lead successfully'
+    });
+  } catch (error) {
+    console.error('Convert to lead error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 router.get('/:id', getLoanById);
 router.post('/', auditLogger('loans', 'CREATE_LOAN'), createLoan);
 router.put('/:id', auditLogger('loans', 'UPDATE_LOAN'), updateLoan);

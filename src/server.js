@@ -262,6 +262,18 @@ app.listen(PORT, async () => {
   if (!fs.existsSync(bankLogoDir)) fs.mkdirSync(bankLogoDir, { recursive: true });
   console.log('✅ profile-photos & bank-logos directories ready');
   
+  // Ensure loan_timer_enabled config exists
+  try {
+    await db.query(`
+      INSERT INTO system_config (config_key, config_value, config_type, description)
+      VALUES ('loan_timer_enabled', 'true', 'feature', 'Enable/disable loan timer countdown in dashboard')
+      ON CONFLICT (config_key) DO NOTHING
+    `);
+    console.log('✅ loan_timer_enabled config ready');
+  } catch (err) {
+    console.error('❌ loan_timer_enabled config init failed:', err.message);
+  }
+  
   // Initialize application stage jobs
   try {
     // Use simple scheduler (no external dependencies)

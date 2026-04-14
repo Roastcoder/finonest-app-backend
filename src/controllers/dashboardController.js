@@ -2,7 +2,7 @@ import db from '../config/database.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
-    const { timeline, startDate, endDate } = req.query;
+    const { timeline, startDate, endDate, managerId } = req.query;
     
     let dateFilter = '';
     let params = [];
@@ -39,6 +39,9 @@ export const getDashboardStats = async (req, res) => {
 
     // Executive filter: sirf apni loans dikhaye (created by them OR converted from their leads)
     let executiveFilter = '';
+    let hierarchyFilter = '';
+    let hierarchyTrackerFilter = '';
+    
     if (req.user.role === 'executive') {
       const paramIndex = params.length + 1;
       executiveFilter = `AND (
@@ -55,12 +58,35 @@ export const getDashboardStats = async (req, res) => {
       )`;
       trackerParams.push(req.user.id);
     }
+    
+    // Admin hierarchy filter: if managerId is provided, show only that manager's team data
+    if (req.user.role === 'admin' && managerId) {
+      const paramIndex = params.length + 1;
+      hierarchyFilter = `AND l.created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        ))
+        OR id = $${paramIndex}
+      )`;
+      params.push(managerId);
+      
+      const trackerParamIndex = trackerParams.length + 1;
+      hierarchyTrackerFilter = ` AND created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${trackerParamIndex}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${trackerParamIndex}
+        ))
+        OR id = $${trackerParamIndex}
+      )`;
+      trackerParams.push(managerId);
+    }
 
     const loginStats = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter} ${executiveFilter}
+      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -69,7 +95,7 @@ export const getDashboardStats = async (req, res) => {
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage = 'DISBURSED' ${dateFilter} ${executiveFilter}
+      WHERE l.application_stage = 'DISBURSED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -78,7 +104,7 @@ export const getDashboardStats = async (req, res) => {
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage = 'APPROVED' ${dateFilter} ${executiveFilter}
+      WHERE l.application_stage = 'APPROVED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -94,7 +120,7 @@ export const getDashboardStats = async (req, res) => {
         END as bucket,
         COUNT(*) as count
       FROM loans l
-      WHERE l.application_stage = 'REJECTED' ${dateFilter} ${executiveFilter}
+      WHERE l.application_stage = 'REJECTED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
     `, params);
 
@@ -110,7 +136,7 @@ export const getDashboardStats = async (req, res) => {
         COUNT(CASE WHEN application_stage = 'DISBURSED' THEN 1 END) as disbursed_units,
         SUM(CASE WHEN application_stage = 'DISBURSED' THEN COALESCE(loan_amount, 0) ELSE 0 END) as disbursed_amount
       FROM loans l
-      WHERE 1=1 ${trackerDateFilter}
+      WHERE 1=1 ${trackerDateFilter} ${hierarchyTrackerFilter}
     `, trackerParams);
 
     const m = monthlyTrackerQuery.rows[0] || {};
@@ -118,7 +144,7 @@ export const getDashboardStats = async (req, res) => {
     const stageBreakdown = await db.query(`
       SELECT application_stage as stage, COUNT(*) as count 
       FROM loans l
-      WHERE 1=1 ${dateFilter} ${executiveFilter}
+      WHERE 1=1 ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
     `, params);
@@ -126,7 +152,7 @@ export const getDashboardStats = async (req, res) => {
     const inProcessTags = await db.query(`
       SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
       FROM loans l 
-      WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} ${executiveFilter}
+      WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
     `, params);
 
@@ -152,7 +178,7 @@ export const getDashboardStats = async (req, res) => {
 
 export const getConvertedLeads = async (req, res) => {
   try {
-    const { timeline } = req.query;
+    const { timeline, managerId } = req.query;
     
     let dateFilter = '';
     let params = [];
@@ -171,6 +197,8 @@ export const getConvertedLeads = async (req, res) => {
 
     // Executive filter: sirf apni converted leads dikhaye
     let executiveFilter = '';
+    let hierarchyFilter = '';
+    
     if (req.user.role === 'executive') {
       const paramIndex = params.length + 1;
       executiveFilter = `AND (
@@ -178,6 +206,19 @@ export const getConvertedLeads = async (req, res) => {
         OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${paramIndex} OR assigned_to = $${paramIndex})
       )`;
       params.push(req.user.id);
+    }
+    
+    // Admin hierarchy filter
+    if (req.user.role === 'admin' && managerId) {
+      const paramIndex = params.length + 1;
+      hierarchyFilter = `AND l.created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        ))
+        OR id = $${paramIndex}
+      )`;
+      params.push(managerId);
     }
 
     const query = `
@@ -187,12 +228,13 @@ export const getConvertedLeads = async (req, res) => {
         l.application_stage,
         COALESCE(b.name, l.financier_name, 'Unassigned') as bank_name,
         l.created_at,
-        COALESCE(l.customer_name, 'Customer ' || l.id) as customer_name
+        COALESCE(l.applicant_name, 'Customer ' || l.id) as customer_name
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
       WHERE l.application_stage IN ('APPROVED', 'DISBURSED', 'IN_PROCESS', 'LOGIN', 'SUBMITTED')
       ${dateFilter}
       ${executiveFilter}
+      ${hierarchyFilter}
       ORDER BY l.created_at DESC
       LIMIT 100
     `;
@@ -212,6 +254,84 @@ export const getConvertedLeads = async (req, res) => {
     res.json(convertedLeads);
   } catch (error) {
     console.error('Converted leads error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getPerformanceData = async (req, res) => {
+  try {
+    const { timeline, startDate, endDate, managerId } = req.query;
+    
+    let dateFilter = '';
+    let params = [];
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
+    const yesterdayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    if (timeline === 'today') {
+      dateFilter = 'AND l.created_at >= $1';
+      params = [todayStart];
+    } else if (timeline === 'yesterday') {
+      dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
+      params = [yesterdayStart, yesterdayEnd];
+    } else if (timeline === 'this_month') {
+      dateFilter = 'AND l.created_at >= $1';
+      params = [monthStart];
+    } else if (startDate && endDate) {
+      dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
+      params = [startDate, endDate];
+    }
+
+    // Executive filter
+    let executiveFilter = '';
+    let hierarchyFilter = '';
+    
+    if (req.user.role === 'executive') {
+      const paramIndex = params.length + 1;
+      executiveFilter = `AND (
+        l.created_by = $${paramIndex}
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${paramIndex} OR assigned_to = $${paramIndex})
+      )`;
+      params.push(req.user.id);
+    }
+    
+    // Admin hierarchy filter
+    if (req.user.role === 'admin' && managerId) {
+      const paramIndex = params.length + 1;
+      hierarchyFilter = `AND l.created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${paramIndex}
+        ))
+        OR id = $${paramIndex}
+      )`;
+      params.push(managerId);
+    }
+
+    const performanceQuery = await db.query(`
+      SELECT 
+        DATE(l.created_at) as date,
+        COUNT(CASE WHEN l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') THEN 1 END) as logins,
+        COUNT(CASE WHEN l.application_stage = 'APPROVED' THEN 1 END) as approved
+      FROM loans l
+      WHERE 1=1 ${dateFilter} ${executiveFilter} ${hierarchyFilter}
+      GROUP BY DATE(l.created_at)
+      ORDER BY DATE(l.created_at) DESC
+      LIMIT 7
+    `, params);
+
+    const performanceData = performanceQuery.rows.map((row, index) => ({
+      name: new Date(row.date).toLocaleDateString('en-US', { weekday: 'short' }),
+      logins: parseInt(row.logins || 0),
+      approved: parseInt(row.approved || 0)
+    })).reverse();
+
+    res.json(performanceData);
+  } catch (error) {
+    console.error('Performance data error:', error);
     res.status(500).json({ error: error.message });
   }
 };

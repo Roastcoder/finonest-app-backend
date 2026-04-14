@@ -464,6 +464,16 @@ const prepareStageSpecificData = (stage, data) => {
 // Handle Stage Specific Logic
 const handleStageSpecificLogic = async (client, recordId, stage, stageData, userId, tableType) => {
   switch (stage) {
+    case APPLICATION_STAGES.SUBMITTED:
+      // Schedule auto-transition to LOGIN after 24 hours
+      await scheduleAutoLoginTransition(client, recordId, new Date().toISOString(), tableType);
+      break;
+      
+    case APPLICATION_STAGES.LOGIN:
+      // Cancel auto-login transition when manually moved to LOGIN
+      await cancelScheduledAutoLoginTransition(client, recordId, tableType);
+      break;
+      
     case APPLICATION_STAGES.APPROVED:
       // Schedule auto-cancellation after 30 days
       await scheduleAutoCancellation(client, recordId, stageData.approvedData.approvedDate, tableType);
@@ -479,8 +489,9 @@ const handleStageSpecificLogic = async (client, recordId, stage, stageData, user
       
     case APPLICATION_STAGES.REJECTED:
     case APPLICATION_STAGES.CANCELLED:
-      // Cancel any scheduled auto-cancellation
+      // Cancel any scheduled jobs
       await cancelScheduledAutoCancellation(client, recordId, tableType);
+      await cancelScheduledAutoLoginTransition(client, recordId, tableType);
       break;
   }
 };
@@ -500,6 +511,36 @@ const scheduleAutoCancellation = async (client, recordId, approvedDate, tableTyp
     );
   } catch (error) {
     console.log(`Scheduled auto-cancellation for ${tableType} ${recordId} after 30 days from ${approvedDate}`);
+  }
+};
+
+// Schedule Auto-Login Transition (24 hours from SUBMITTED)
+const scheduleAutoLoginTransition = async (client, recordId, submittedDate, tableType) => {
+  try {
+    await client.query(
+      'INSERT INTO scheduled_jobs (job_type, reference_id, scheduled_date, status, metadata) VALUES ($1, $2, $3, $4, $5)',
+      [
+        'AUTO_LOGIN_TRANSITION',
+        recordId,
+        new Date(new Date(submittedDate).getTime() + 24 * 60 * 60 * 1000), // 24 hours from submission
+        'PENDING',
+        JSON.stringify({ tableType })
+      ]
+    );
+  } catch (error) {
+    console.log(`Scheduled auto-login transition for ${tableType} ${recordId} after 24 hours from ${submittedDate}`);
+  }
+};
+
+// Cancel Scheduled Auto-Login Transition
+const cancelScheduledAutoLoginTransition = async (client, recordId, tableType) => {
+  try {
+    await client.query(
+      'UPDATE scheduled_jobs SET status = $1 WHERE job_type = $2 AND reference_id = $3 AND status = $4 AND metadata->\'tableType\' = $5',
+      ['CANCELLED', 'AUTO_LOGIN_TRANSITION', recordId, 'PENDING', `"${tableType}"`]
+    );
+  } catch (error) {
+    console.log(`Cancelled scheduled auto-login transition for ${tableType} ${recordId}`);
   }
 };
 
@@ -532,7 +573,7 @@ const createLoanFromLead = async (client, leadId, stageData, userId) => {
     // Generate loan number
     const loanNumber = await generateLoanNumber(client);
     
-    // Create loan record
+    // Create loan record with fresh timestamp
     await client.query(`
       INSERT INTO loans (
         lead_id, loan_number, customer_name, phone, email, 
@@ -540,8 +581,8 @@ const createLoanFromLead = async (client, leadId, stageData, userId) => {
         status, disbursement_date, assigned_to, created_by,
         application_stage, roi, loan_account_number,
         rc_type, rc_collected_by, rto_agent_name_rc, rto_agent_mobile,
-        banker_name, banker_mobile
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+        banker_name, banker_mobile, created_at, stage_changed_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW())
     `, [
       leadId,
       loanNumber,

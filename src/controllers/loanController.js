@@ -2,8 +2,108 @@ import db from '../config/database.js';
 import { buildUpdateQuery } from '../utils/postgres.js';
 import applicationStageLogic from '../utils/enhancedApplicationStageLogic.js';
 
+// Get burst table view - all loans with their stages in one table
+export const getBurstTable = async (req, res) => {
+  try {
+    let query = `
+      SELECT 
+        l.id,
+        l.loan_number,
+        l.applicant_name,
+        l.mobile,
+        COALESCE(creator.full_name, creator.user_id, 'Unknown') as created_by_name,
+        COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
+        CASE 
+          WHEN l.application_stage = 'SUBMITTED' THEN 'Submitted'
+          WHEN l.application_stage = 'LOGIN' THEN 'Login'
+          WHEN l.application_stage = 'IN_PROCESS' THEN 'In Process'
+          WHEN l.application_stage = 'APPROVED' THEN 'Approved'
+          WHEN l.application_stage = 'REJECTED' THEN 'Rejected'
+          WHEN l.application_stage = 'DISBURSED' THEN 'Disbursed'
+          WHEN l.application_stage = 'CANCELLED' THEN 'Cancelled'
+          ELSE 'Submitted'
+        END as stage_label,
+        l.loan_amount,
+        COALESCE(b.name, l.financier_name, 'Not Assigned') as bank_name,
+        l.created_at,
+        l.stage_changed_at
+      FROM loans l
+      LEFT JOIN users creator ON l.created_by = creator.id
+      LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
+      WHERE COALESCE(l.application_stage, 'SUBMITTED') IN ('SUBMITTED', 'LOGIN', 'IN_PROCESS')
+    `;
+    
+    const conditions = [];
+    const values = [];
+    
+    // Admin hierarchy filter
+    if (req.user.role === 'admin' && req.query.managerId) {
+      conditions.push(`l.created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${values.length + 1}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${values.length + 1}
+        ))
+        OR id = $${values.length + 1}
+      )`);
+      values.push(req.query.managerId);
+    }
+    else if (req.user.role === 'executive') {
+      // Executive sees loans they created OR loans converted from their leads
+      conditions.push(`(
+        l.created_by = $${values.length + 1}
+        OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${values.length + 1} OR assigned_to = $${values.length + 1})
+      )`);
+      values.push(req.user.id);
+    } else if (req.user.role === 'team_leader') {
+      // Team leader sirf apni loans dekhega
+      conditions.push(`l.created_by = $${values.length + 1}`);
+      values.push(req.user.id);
+    } else if (req.user.role === 'manager' || req.user.role === 'sales_manager' || req.user.role === 'dsa' || req.user.role === 'branch_manager') {
+      // Manager, DSA, and Branch Manager can see loans created by their team
+      conditions.push(`(
+        l.created_by IN (
+          WITH RECURSIVE team_hierarchy AS (
+            SELECT id FROM users WHERE reporting_to = $${values.length + 1} OR dsa_id = $${values.length + 1}
+            UNION ALL
+            SELECT u.id FROM users u
+            INNER JOIN team_hierarchy t ON u.reporting_to = t.id
+          )
+          SELECT id FROM team_hierarchy
+        )
+        OR l.assigned_to = $${values.length + 1}
+        OR l.created_by = $${values.length + 1}
+      )`);
+      values.push(req.user.id);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' AND ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY l.created_at DESC';
+    
+    const result = await db.query(query, values);
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('Get burst table error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getAllLoans = async (req, res) => {
   try {
+    // Check if login stage timer is enabled from system config
+    const timerConfigResult = await db.query(
+      `SELECT config_value FROM system_config WHERE config_key = 'login_stage_enabled'`
+    );
+    const isLoginTimerEnabled = timerConfigResult.rows.length === 0 || timerConfigResult.rows[0].config_value === 'true';
+
+    // Get login stage enabled timestamp
+    const loginEnabledAtResult = await db.query(
+      `SELECT config_value FROM system_config WHERE config_key = 'login_stage_enabled_at'`
+    );
+    const loginStageEnabledAt = loginEnabledAtResult.rows.length > 0 ? loginEnabledAtResult.rows[0].config_value : null;
+
     let query = `
       SELECT l.*, 
              COALESCE(u.full_name, u.user_id) as assigned_to_name,
@@ -60,7 +160,24 @@ export const getAllLoans = async (req, res) => {
     const conditions = [];
     const values = [];
     
-    if (req.user.role === 'executive') {
+    // Filter by application stage if provided
+    if (req.query.application_stage) {
+      conditions.push('l.application_stage = $' + (values.length + 1));
+      values.push(req.query.application_stage);
+    }
+    
+    // Admin hierarchy filter
+    if (req.user.role === 'admin' && req.query.managerId) {
+      conditions.push(`l.created_by IN (
+        SELECT id FROM users WHERE reporting_to = $${values.length + 1}
+        OR id IN (SELECT id FROM users WHERE reporting_to IN (
+          SELECT id FROM users WHERE reporting_to = $${values.length + 1}
+        ))
+        OR id = $${values.length + 1}
+      )`);
+      values.push(req.query.managerId);
+    }
+    else if (req.user.role === 'executive') {
       // Executive sees loans they created OR loans converted from their leads
       conditions.push(`(
         l.created_by = $1
@@ -103,7 +220,9 @@ export const getAllLoans = async (req, res) => {
       ...row,
       application_stage: row.application_stage || applicationStageLogic.APPLICATION_STAGES.SUBMITTED,
       application_stage_label: row.application_stage_label || 'Submitted',
-      application_stage_color: row.application_stage_color || applicationStageLogic.STAGE_COLORS.SUBMITTED
+      application_stage_color: row.application_stage_color || applicationStageLogic.STAGE_COLORS.SUBMITTED,
+      timer_enabled: isLoginTimerEnabled,
+      login_stage_enabled_at: loginStageEnabledAt
     }));
     
     return res.json(processedRows);
@@ -390,7 +509,9 @@ export const createLoan = async (req, res) => {
       disbursement_date: req.body.disbursement_date || null,
       pdd: req.body.pdd || null,
       assigned_to: req.body.assigned_to || null,
-      created_by: req.user.id
+      created_by: req.user.id,
+      created_at: new Date(), // Ensure fresh timestamp
+      stage_changed_at: new Date() // Ensure fresh stage timestamp
     };
     
     // Filter: remove undefined AND columns that don't exist in table
@@ -684,10 +805,11 @@ export const updateLoanStage = async (req, res) => {
       currentHistory = [];
     }
     
-    // Create new stage entry with timestamp
+    // Create new stage entry with IST timestamp
+    const istTime = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000)).toISOString();
     const newStageEntry = {
       ...stageData,
-      updatedAt: new Date().toISOString(),
+      updatedAt: istTime,
       updatedBy: req.user.id
     };
     
@@ -701,15 +823,16 @@ export const updateLoanStage = async (req, res) => {
     });
     
     // Build extra column updates for stage-specific fields
-    const extraCols = [];
-    const extraVals = [];
+    const extraCols = ['stage_changed_at'];
+    const extraVals = [istTime];
 
     if (stageData.stage === 'LOGIN') {
       const appScore = stageData.appScore || stageData.app_score || null;
       const creditScore = stageData.creditScore || stageData.credit_score || null;
-
+      const istLoginDate = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000)).toISOString();
+      
       extraCols.push('app_score', 'credit_score', 'login_date');
-      extraVals.push(appScore, creditScore, stageData.loginDate || new Date().toISOString());
+      extraVals.push(appScore, creditScore, stageData.loginDate || istLoginDate);
 
       // Fire-and-forget: fetch credit report from Neokred and save all data + auto link loan tag
       (async () => {
@@ -906,8 +1029,9 @@ export const updateLoanStage = async (req, res) => {
       extraCols.push('roi', 'tenure', 'approval_remarks');
       extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAmount ? `Approved amount: ${stageData.loanAmount}` : null);
     } else if (stageData.stage === 'DISBURSED') {
+      const istDisbursementDate = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000)).toISOString();
       extraCols.push('roi', 'tenure', 'loan_account_number', 'rc_type', 'rc_collected_by', 'disbursement_date', 'rto_agent_name_rc', 'rto_agent_mobile', 'banker_name', 'banker_mobile');
-      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, new Date().toISOString(), stageData.agentName || null, stageData.agentMobile || null, stageData.bankerName || null, stageData.bankerMobile || null);
+      extraVals.push(stageData.roi || null, stageData.tenure || null, stageData.loanAccountNumber || null, stageData.rcType || null, stageData.collectedBy || null, istDisbursementDate, stageData.agentName || null, stageData.agentMobile || null, stageData.bankerName || null, stageData.bankerMobile || null);
     } else if (stageData.stage === 'REJECTED') {
       extraCols.push('rejection_remarks');
       extraVals.push(stageData.remarks || null);
@@ -922,17 +1046,16 @@ export const updateLoanStage = async (req, res) => {
     const idParam = `$${baseVals.length}`;
     const extraSet = extraSetClauses ? `, ${extraSetClauses}` : '';
 
-    // Update the loan's current stage
+    // Update the loan's current stage with stage_changed_at timestamp
     const updateResult = await db.query(
       `UPDATE loans 
        SET application_stage = $1, 
            stage_data = $2, 
            stage_history = $3
            ${extraSet},
-           stage_changed_at = NOW(),
            updated_at = NOW() 
        WHERE id = ${idParam}
-       RETURNING id, application_stage`,
+       RETURNING id, application_stage, stage_changed_at`,
       baseVals
     );
     
@@ -940,7 +1063,19 @@ export const updateLoanStage = async (req, res) => {
       return res.status(404).json({ error: 'Failed to update loan stage' });
     }
     
-    console.log('Loan stage updated successfully:', updateResult.rows[0]);
+    console.log('🔍 DEBUG Timer Calculation:', {
+      loanId,
+      stage: stageData.stage,
+      createdAt: 'from database',
+      stageChangedAt: 'will be set to IST',
+      istTime: new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000)).toISOString()
+    });
+    
+    console.log('Loan stage updated successfully:', {
+      id: updateResult.rows[0].id,
+      stage: updateResult.rows[0].application_stage,
+      stage_changed_at: updateResult.rows[0].stage_changed_at
+    });
     
     res.json({ 
       message: 'Loan stage updated successfully',

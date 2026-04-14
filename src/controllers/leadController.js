@@ -10,6 +10,12 @@ const notifyLeadCreated = async (leadId, assignedTo) => {
 
 export const getAllLeads = async (req, res) => {
   try {
+    // Check if lead timer is enabled from system config
+    const timerConfigResult = await db.query(
+      `SELECT config_value FROM system_config WHERE config_key = 'lead_stage_enabled'`
+    );
+    const isLeadTimerEnabled = timerConfigResult.rows.length === 0 || timerConfigResult.rows[0].config_value === 'true';
+
     // Check which optional columns exist
     const colCheck = await db.query(`
       SELECT column_name FROM information_schema.columns 
@@ -208,7 +214,10 @@ export const getAllLeads = async (req, res) => {
               type: 'loan',
               loan_number: lead.loan_number
             } : null
-          }
+          },
+          
+          // Timer configuration
+          timer_enabled: isLeadTimerEnabled
         };
       } catch (err) {
         console.error('Error enriching lead data:', err);

@@ -2,10 +2,10 @@ import db from '../config/database.js';
 
 export const getDashboardStats = async (req, res) => {
   try {
-    const { timeline, startDate, endDate, managerId } = req.query;
+    const { timeline, startDate, endDate, managerId, stageFilter, disbursementFilter, bankDistributionFilter } = req.query;
     
     let dateFilter = '';
-    let params = [];
+    let baseParams = [];
     let trackerDateFilter = '';
     let trackerParams = [];
 
@@ -17,21 +17,21 @@ export const getDashboardStats = async (req, res) => {
 
     if (timeline === 'today') {
       dateFilter = 'AND l.created_at >= $1';
-      params = [todayStart];
+      baseParams = [todayStart];
     } else if (timeline === 'yesterday') {
       dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
-      params = [yesterdayStart, yesterdayEnd];
+      baseParams = [yesterdayStart, yesterdayEnd];
     } else if (timeline === 'this_month') {
       dateFilter = 'AND l.created_at >= $1';
-      params = [monthStart];
+      baseParams = [monthStart];
     } else if (startDate && endDate) {
       dateFilter = 'AND l.created_at BETWEEN $1 AND $2';
-      params = [startDate, endDate];
+      baseParams = [startDate, endDate];
     }
 
     if (dateFilter) {
       trackerDateFilter = dateFilter;
-      trackerParams = [...params];
+      trackerParams = [...baseParams];
     } else {
       trackerDateFilter = 'AND created_at >= $1';
       trackerParams = [monthStart];
@@ -43,12 +43,12 @@ export const getDashboardStats = async (req, res) => {
     let hierarchyTrackerFilter = '';
     
     if (req.user.role === 'executive') {
-      const paramIndex = params.length + 1;
+      const paramIndex = baseParams.length + 1;
       executiveFilter = `AND (
         l.created_by = $${paramIndex}
         OR l.lead_id IN (SELECT id FROM leads WHERE created_by = $${paramIndex} OR assigned_to = $${paramIndex})
       )`;
-      params.push(req.user.id);
+      baseParams.push(req.user.id);
       
       // Tracker params ke liye bhi add karo
       const trackerParamIndex = trackerParams.length + 1;
@@ -61,7 +61,7 @@ export const getDashboardStats = async (req, res) => {
     
     // Admin hierarchy filter: if managerId is provided, show only that manager's team data
     if (req.user.role === 'admin' && managerId) {
-      const paramIndex = params.length + 1;
+      const paramIndex = baseParams.length + 1;
       hierarchyFilter = `AND l.created_by IN (
         SELECT id FROM users WHERE reporting_to = $${paramIndex}
         OR id IN (SELECT id FROM users WHERE reporting_to IN (
@@ -69,7 +69,7 @@ export const getDashboardStats = async (req, res) => {
         ))
         OR id = $${paramIndex}
       )`;
-      params.push(managerId);
+      baseParams.push(managerId);
       
       const trackerParamIndex = trackerParams.length + 1;
       hierarchyTrackerFilter = ` AND created_by IN (
@@ -82,23 +82,76 @@ export const getDashboardStats = async (req, res) => {
       trackerParams.push(managerId);
     }
 
+    // Login Volume Query
+    let loginParams = [...baseParams];
+    let loginStageFilter = '';
+    
+    if (stageFilter && stageFilter !== 'LOGIN') {
+      const paramIndex = loginParams.length + 1;
+      loginStageFilter = `AND l.application_stage = $${paramIndex}`;
+      loginParams.push(stageFilter);
+    } else {
+      loginStageFilter = `AND l.application_stage = 'LOGIN'`;
+    }
+
     const loginStats = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED') ${dateFilter} ${executiveFilter} ${hierarchyFilter}
+      WHERE 1=1 ${loginStageFilter} ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
-    `, params);
+    `, loginParams);
+
+    // Disbursement Query
+    let disbursementParams = [...baseParams];
+    let disbursementStageFilter = '';
+    
+    if (disbursementFilter && disbursementFilter !== 'DISBURSED') {
+      const paramIndex = disbursementParams.length + 1;
+      disbursementStageFilter = `AND l.application_stage = $${paramIndex}`;
+      disbursementParams.push(disbursementFilter);
+    } else {
+      disbursementStageFilter = `AND l.application_stage = 'DISBURSED'`;
+    }
 
     const disbursementBankWise = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
       LEFT JOIN banks b ON l.bank_id = b.id
-      WHERE l.application_stage = 'DISBURSED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
+      WHERE 1=1 ${disbursementStageFilter} ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
-    `, params);
+    `, disbursementParams);
+
+    // Bank Distribution Query (all stages combined)
+    let bankDistributionParams = [...baseParams];
+    let bankDistributionStageFilter = '';
+    
+    if (bankDistributionFilter && bankDistributionFilter !== 'ALL') {
+      const paramIndex = bankDistributionParams.length + 1;
+      bankDistributionStageFilter = `AND l.application_stage = $${paramIndex}`;
+      bankDistributionParams.push(bankDistributionFilter);
+    } else {
+      bankDistributionStageFilter = `AND l.application_stage IN ('LOGIN', 'IN_PROCESS', 'APPROVED', 'DISBURSED')`;
+    }
+    
+    const bankDistributionQuery = await db.query(`
+      SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", COUNT(l.id) as count
+      FROM loans l
+      LEFT JOIN banks b ON l.bank_id = b.id
+      WHERE 1=1 ${bankDistributionStageFilter} ${dateFilter} ${executiveFilter} ${hierarchyFilter}
+      GROUP BY 1
+      ORDER BY 2 DESC
+    `, bankDistributionParams);
+
+    console.log('🏦 Bank Distribution Query Result:', {
+      rowCount: bankDistributionQuery.rows.length,
+      data: bankDistributionQuery.rows,
+      bankDistributionParams: bankDistributionParams,
+      bankDistributionFilter: bankDistributionFilter,
+      bankDistributionStageFilter: bankDistributionStageFilter
+    });
 
     const approvedBankWise = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
@@ -107,7 +160,7 @@ export const getDashboardStats = async (req, res) => {
       WHERE l.application_stage = 'APPROVED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
-    `, params);
+    `, baseParams);
 
     const pddTrackerRows = await db.query(`
       SELECT 
@@ -122,7 +175,7 @@ export const getDashboardStats = async (req, res) => {
       FROM loans l
       WHERE l.application_stage = 'REJECTED' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
-    `, params);
+    `, baseParams);
 
     const pddTracker = {};
     pddTrackerRows.rows.forEach(r => pddTracker[r.bucket] = parseInt(r.count || 0));
@@ -147,18 +200,19 @@ export const getDashboardStats = async (req, res) => {
       WHERE 1=1 ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
       ORDER BY 2 DESC
-    `, params);
+    `, baseParams);
 
     const inProcessTags = await db.query(`
       SELECT 'Pending Follow-up' as tag, COUNT(id) as count 
       FROM loans l 
       WHERE l.application_stage = 'IN_PROCESS' ${dateFilter} ${executiveFilter} ${hierarchyFilter}
       GROUP BY 1
-    `, params);
+    `, baseParams);
 
-    res.json({
+    const responseData = {
       loginBankWise: loginStats.rows,
       disbursementBankWise: disbursementBankWise.rows,
+      bankDistribution: bankDistributionQuery.rows,
       approvedBankWise: approvedBankWise.rows,
       pddTracker: pddTracker,
       stageBreakdown: stageBreakdown.rows,
@@ -169,7 +223,16 @@ export const getDashboardStats = async (req, res) => {
         disbursed: { units: parseInt(m.disbursed_units || 0), amount: parseFloat(m.disbursed_amount || 0) }
       },
       inProcessTags: inProcessTags.rows
+    };
+
+    console.log('📊 Dashboard Response Data:', {
+      bankDistribution: responseData.bankDistribution,
+      loginBankWise: responseData.loginBankWise,
+      disbursementBankWise: responseData.disbursementBankWise,
+      totalBankDistributionCount: responseData.bankDistribution?.length || 0
     });
+
+    res.json(responseData);
   } catch (error) {
     console.error('CRITICAL: Dashboard stats error:', error);
     res.status(500).json({ error: error.message, stack: error.stack });

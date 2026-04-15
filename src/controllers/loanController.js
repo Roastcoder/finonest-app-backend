@@ -11,6 +11,8 @@ export const getBurstTable = async (req, res) => {
         l.loan_number,
         l.applicant_name,
         l.mobile,
+        l.vehicle_number,
+        l.case_type,
         COALESCE(creator.full_name, creator.user_id, 'Unknown') as created_by_name,
         COALESCE(l.application_stage, 'SUBMITTED') as application_stage,
         CASE 

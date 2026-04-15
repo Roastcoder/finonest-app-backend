@@ -16,7 +16,8 @@ const DEFAULT_PERMISSIONS = {
         criticalNodes: true,
         globalTraffic: true,
         applicationBreakdown: true,
-        financierPerformance: true
+        financierPerformance: true,
+        timer: true
       }
     },
     leads: {
@@ -252,6 +253,39 @@ const DEFAULT_PERMISSIONS = {
     users: { view: false, create: false, edit: false, delete: false },
     reports: { view: false, export: false, create: false },
     settings: { view: false, edit: false }
+  }
+};
+
+export const getDashboardPermissions = async (req, res) => {
+  try {
+    // Ensure role_permissions table exists
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        id SERIAL PRIMARY KEY,
+        role VARCHAR(50) NOT NULL UNIQUE,
+        permissions JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    
+    const result = await db.query('SELECT role, permissions FROM role_permissions ORDER BY role');
+    
+    const allPermissions = {};
+    result.rows.forEach(row => {
+      allPermissions[row.role] = row.permissions;
+    });
+
+    // Fill in missing roles with defaults
+    Object.keys(DEFAULT_PERMISSIONS).forEach(role => {
+      if (!allPermissions[role]) {
+        allPermissions[role] = DEFAULT_PERMISSIONS[role];
+      }
+    });
+
+    res.json(allPermissions);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 };
 

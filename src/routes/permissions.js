@@ -1,12 +1,13 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
-import { getPermissions, updatePermissions, getAllRolePermissions, resetPermissions } from '../controllers/permissionsController.js';
+import { getPermissions, updatePermissions, getAllRolePermissions, resetPermissions, getDashboardPermissions } from '../controllers/permissionsController.js';
 
 const router = express.Router();
 
 router.use(authenticate);
 
 router.get('/', getPermissions);
+router.get('/dashboard', getDashboardPermissions);
 router.get('/all', getAllRolePermissions);
 router.put('/', updatePermissions);
 router.post('/reset', resetPermissions);

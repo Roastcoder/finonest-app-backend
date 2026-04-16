@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllLeads, getLeadById, createLead, updateLead, deleteLead, getCustomerProfile, upsertCustomerProfile, cloneLead, updateLeadStage, getLeadStatusHistory, getStatusStatistics, validateStatusTransition } from '../controllers/leadController.js';
+import { getAllLeads, getLeadById, createLead, updateLead, deleteLead, getCustomerProfile, upsertCustomerProfile, cloneLead, updateLeadStage, getLeadStatusHistory, getStatusStatistics, validateStatusTransition, searchLeadsBySourcingPerson, deleteLeadsBySourcingPerson } from '../controllers/leadController.js';
 import { authenticate } from '../middleware/auth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 import statusValidation from '../middleware/statusValidation.js';
@@ -11,6 +11,10 @@ router.use(authenticate);
 router.get('/', getAllLeads);
 router.get('/statistics', getStatusStatistics);
 router.post('/', auditLogger('leads', 'CREATE_LEAD'), createLead);
+
+// Admin-only bulk operations
+router.post('/search-by-sourcing-person', searchLeadsBySourcingPerson);
+router.post('/delete-by-sourcing-person', auditLogger('leads', 'BULK_DELETE_BY_SOURCING_PERSON'), deleteLeadsBySourcingPerson);
 
 // More specific routes BEFORE generic :id routes
 router.get('/:id/profile', getCustomerProfile);

@@ -821,3 +821,192 @@ export const validateStatusTransition = async (req, res) => {
     });
   }
 };
+
+export const searchLeadsBySourcingPerson = async (req, res) => {
+  try {
+    const { sourcing_person_name } = req.body;
+    
+    if (!sourcing_person_name || !sourcing_person_name.trim()) {
+      return res.status(400).json({ error: 'Sourcing person name is required' });
+    }
+    
+    // Only admin can perform this operation
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admin can perform this operation' });
+    }
+    
+    const name = sourcing_person_name.trim();
+    
+    // Find all leads created by this sourcing person
+    const leadsResult = await db.query(`
+      SELECT l.id, l.customer_id, l.customer_name, l.phone, l.created_by, l.created_at, l.sourcing_person_name
+      FROM leads l
+      WHERE LOWER(COALESCE(l.sourcing_person_name, '')) LIKE LOWER($1)
+      ORDER BY l.created_at DESC
+    `, [`%${name}%`]);
+    
+    if (leadsResult.rows.length === 0) {
+      return res.json({
+        sourcingPersonName: name,
+        leads: [],
+        deletableLeads: [],
+        nonDeletableLeads: [],
+        message: `No leads found for sourcing person: ${name}`
+      });
+    }
+    
+    // Check which leads have been converted to loans
+    const leadIds = leadsResult.rows.map(l => l.id);
+    const loansResult = await db.query(`
+      SELECT lead_id, id as loan_id, loan_number 
+      FROM loans 
+      WHERE lead_id = ANY($1)
+    `, [leadIds]);
+    
+    const leadsWithLoans = new Set(loansResult.rows.map(l => l.lead_id));
+    const deletableLeads = leadsResult.rows.filter(lead => !leadsWithLoans.has(lead.id));
+    const nonDeletableLeads = leadsResult.rows.filter(lead => leadsWithLoans.has(lead.id)).map(lead => {
+      const loan = loansResult.rows.find(l => l.lead_id === lead.id);
+      return {
+        ...lead,
+        loan_id: loan.loan_id,
+        loan_number: loan.loan_number
+      };
+    });
+    
+    res.json({
+      sourcingPersonName: name,
+      leads: leadsResult.rows,
+      deletableLeads,
+      nonDeletableLeads,
+      totalFound: leadsResult.rows.length,
+      canDelete: deletableLeads.length,
+      cannotDelete: nonDeletableLeads.length
+    });
+    
+  } catch (error) {
+    console.error('Search leads by sourcing person error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const deleteLeadsBySourcingPerson = async (req, res) => {
+  try {
+    const { sourcing_person_name } = req.body;
+    
+    if (!sourcing_person_name || !sourcing_person_name.trim()) {
+      return res.status(400).json({ error: 'Sourcing person name is required' });
+    }
+    
+    // Only admin can perform this operation
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admin can perform this operation' });
+    }
+    
+    const name = sourcing_person_name.trim();
+    
+    console.log(`🗑️ Admin ${req.user.id} attempting to delete leads by sourcing person: ${name}`);
+    
+    // Find all leads created by this sourcing person
+    const leadsResult = await db.query(`
+      SELECT l.id, l.customer_id, l.customer_name, l.phone, l.sourcing_person_name
+      FROM leads l
+      WHERE LOWER(COALESCE(l.sourcing_person_name, '')) LIKE LOWER($1)
+      ORDER BY l.created_at DESC
+    `, [`%${name}%`]);
+    
+    if (leadsResult.rows.length === 0) {
+      return res.json({
+        message: `No leads found for sourcing person: ${name}`,
+        deletedCount: 0,
+        skippedCount: 0
+      });
+    }
+    
+    // Check which leads have been converted to loans
+    const leadIds = leadsResult.rows.map(l => l.id);
+    const loansResult = await db.query(`
+      SELECT lead_id FROM loans WHERE lead_id = ANY($1)
+    `, [leadIds]);
+    
+    const leadsWithLoans = new Set(loansResult.rows.map(l => l.lead_id));
+    const deletableLeads = leadsResult.rows.filter(lead => !leadsWithLoans.has(lead.id));
+    
+    if (deletableLeads.length === 0) {
+      return res.json({
+        message: `All ${leadsResult.rows.length} leads by ${name} have been converted to loans and cannot be deleted`,
+        deletedCount: 0,
+        skippedCount: leadsResult.rows.length
+      });
+    }
+    
+    console.log(`📊 Found ${leadsResult.rows.length} total leads, ${deletableLeads.length} can be deleted`);
+    
+    let deletedCount = 0;
+    let failedCount = 0;
+    
+    // Delete leads one by one with individual transactions
+    for (const lead of deletableLeads) {
+      const client = await db.connect();
+      
+      try {
+        await client.query('BEGIN');
+        
+        console.log(`🔄 Processing lead ID: ${lead.id} (${lead.customer_name})`);
+        
+        // Delete related records in correct order (only from tables that exist)
+        
+        // 1. Delete customer profiles
+        const profileResult = await client.query('DELETE FROM customer_profiles WHERE lead_id = $1', [lead.id]);
+        if (profileResult.rowCount > 0) {
+          console.log(`   - Deleted ${profileResult.rowCount} customer profiles`);
+        }
+        
+        // 2. Delete lead stage history
+        const stageResult = await client.query('DELETE FROM lead_stage_history WHERE lead_id = $1', [lead.id]);
+        if (stageResult.rowCount > 0) {
+          console.log(`   - Deleted ${stageResult.rowCount} stage history records`);
+        }
+        
+        // 3. Delete the lead itself
+        const deleteResult = await client.query('DELETE FROM leads WHERE id = $1', [lead.id]);
+        
+        if (deleteResult.rowCount > 0) {
+          await client.query('COMMIT');
+          deletedCount++;
+          console.log(`   ✅ Successfully deleted lead ID: ${lead.id} (${lead.customer_name})`);
+        } else {
+          await client.query('ROLLBACK');
+          failedCount++;
+          console.log(`   ❌ Failed to delete lead ID: ${lead.id} - Lead not found`);
+        }
+        
+      } catch (error) {
+        await client.query('ROLLBACK');
+        failedCount++;
+        console.log(`   ❌ Failed to delete lead ID: ${lead.id} - ${error.message}`);
+        
+        // Log foreign key constraint errors specifically
+        if (error.code === '23503') {
+          console.log(`   🔗 Foreign key constraint violation for lead ${lead.id}`);
+        }
+      } finally {
+        client.release();
+      }
+    }
+    
+    console.log(`🎉 Deletion completed: ${deletedCount} deleted, ${failedCount} failed`);
+    
+    res.json({
+      message: `Successfully deleted ${deletedCount} leads by ${name}`,
+      deletedCount,
+      failedCount,
+      skippedCount: leadsWithLoans.size,
+      totalFound: leadsResult.rows.length
+    });
+    
+  } catch (error) {
+    console.error('Delete leads by sourcing person error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};

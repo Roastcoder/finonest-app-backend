@@ -145,14 +145,6 @@ export const getDashboardStats = async (req, res) => {
       ORDER BY 2 DESC
     `, bankDistributionParams);
 
-    console.log('🏦 Bank Distribution Query Result:', {
-      rowCount: bankDistributionQuery.rows.length,
-      data: bankDistributionQuery.rows,
-      bankDistributionParams: bankDistributionParams,
-      bankDistributionFilter: bankDistributionFilter,
-      bankDistributionStageFilter: bankDistributionStageFilter
-    });
-
     const approvedBankWise = await db.query(`
       SELECT COALESCE(b.name, l.financier_name, 'Unassigned') as "bankName", SUM(COALESCE(l.loan_amount, 0)) as amount, COUNT(l.id) as units
       FROM loans l
@@ -224,13 +216,6 @@ export const getDashboardStats = async (req, res) => {
       },
       inProcessTags: inProcessTags.rows
     };
-
-    console.log('📊 Dashboard Response Data:', {
-      bankDistribution: responseData.bankDistribution,
-      loginBankWise: responseData.loginBankWise,
-      disbursementBankWise: responseData.disbursementBankWise,
-      totalBankDistributionCount: responseData.bankDistribution?.length || 0
-    });
 
     res.json(responseData);
   } catch (error) {

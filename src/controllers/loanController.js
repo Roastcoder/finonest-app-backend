@@ -2,9 +2,15 @@ import db from '../config/database.js';
 import { buildUpdateQuery } from '../utils/postgres.js';
 import applicationStageLogic from '../utils/enhancedApplicationStageLogic.js';
 
-// Get burst table view - all loans with their stages in one table
+// Get burst table view - all in-process loans
 export const getBurstTable = async (req, res) => {
   try {
+    // Check if login stage timer is enabled from system config
+    const timerConfigResult = await db.query(
+      `SELECT config_value FROM system_config WHERE config_key = 'login_stage_enabled'`
+    );
+    const isLoginTimerEnabled = timerConfigResult.rows.length === 0 || timerConfigResult.rows[0].config_value === 'true';
+
     let query = `
       SELECT 
         l.id,
@@ -28,7 +34,15 @@ export const getBurstTable = async (req, res) => {
         l.loan_amount,
         COALESCE(b.name, l.financier_name, 'Not Assigned') as bank_name,
         l.created_at,
-        l.stage_changed_at
+        l.stage_changed_at,
+        -- Calculate if timer is expired
+        CASE 
+          WHEN l.application_stage = 'SUBMITTED' THEN 
+            EXTRACT(EPOCH FROM (NOW() - l.created_at)) >= 86400
+          WHEN l.application_stage = 'LOGIN' THEN 
+            EXTRACT(EPOCH FROM (NOW() - COALESCE(l.stage_changed_at, l.created_at))) >= 86400
+          ELSE false
+        END as timer_expired
       FROM loans l
       LEFT JOIN users creator ON l.created_by = creator.id
       LEFT JOIN banks b ON COALESCE(l.assigned_bank_id, l.bank_id) = b.id
@@ -38,7 +52,7 @@ export const getBurstTable = async (req, res) => {
     const conditions = [];
     const values = [];
     
-    // Admin hierarchy filter
+    // Admin hierarchy filter - if no managerId, admin sees ALL loans
     if (req.user.role === 'admin' && req.query.managerId) {
       conditions.push(`l.created_by IN (
         SELECT id FROM users WHERE reporting_to = $${values.length + 1}
@@ -49,6 +63,7 @@ export const getBurstTable = async (req, res) => {
       )`);
       values.push(req.query.managerId);
     }
+    // Admin without managerId sees ALL loans - no additional filter
     else if (req.user.role === 'executive') {
       // Executive sees loans they created OR loans converted from their leads
       conditions.push(`(
@@ -85,6 +100,7 @@ export const getBurstTable = async (req, res) => {
     query += ' ORDER BY l.created_at DESC';
     
     const result = await db.query(query, values);
+    
     return res.json(result.rows);
   } catch (error) {
     console.error('Get burst table error:', error.message);

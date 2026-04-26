@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 import { rcLookup, getCreditReport, tagLead, updateLinkLoanChecked, autoCheckForLoan } from '../controllers/linkLoanController.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 

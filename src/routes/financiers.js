@@ -8,7 +8,7 @@ import {
   createFinancierRate,
   updateFinancierRate
 } from '../controllers/financierController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

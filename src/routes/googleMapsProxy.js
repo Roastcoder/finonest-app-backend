@@ -1,6 +1,6 @@
 import express from 'express';
 import axios from 'axios';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';

@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 import {
   handleWebhook,
   sendMessage,

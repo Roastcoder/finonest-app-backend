@@ -11,7 +11,7 @@ import {
   resetToDefaults,
   toggleStageAccess
 } from '../controllers/systemConfigController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

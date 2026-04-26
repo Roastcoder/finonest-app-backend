@@ -40,6 +40,8 @@ import googleMapsProxyRoutes from './routes/googleMapsProxy.js';
 import loanDraftsRoutes from './routes/loanDrafts.js';
 import { logger } from './middleware/logger.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
+import { securityMonitor } from './middleware/enhancedAuth.js';
+import initializeSecurity from './utils/initializeSecurity.js';
 import applicationStageJobs from './utils/applicationStageJobs.js';
 import simpleScheduler from './utils/simpleScheduler.js';
 
@@ -56,6 +58,7 @@ app.options('*', cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(logger);
+app.use(securityMonitor); // Add security monitoring
 
 // Serve static files for uploads
 app.use('/uploads', express.static('uploads'));
@@ -272,6 +275,13 @@ app.listen(PORT, async () => {
     console.log('✅ loan_timer_enabled config ready');
   } catch (err) {
     console.error('❌ loan_timer_enabled config init failed:', err.message);
+  }
+  
+  // Initialize security system
+  try {
+    await initializeSecurity();
+  } catch (error) {
+    console.error('❌ Security initialization failed:', error);
   }
   
   // Initialize application stage jobs

@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllLoans, getLoanById, createLoan, deleteLoan, updateLoan, updateLoanStage, getBurstTable } from '../controllers/loanController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authorize, requireMinimumRole, validateResourceOwnership, applyDataFilters } from '../middleware/enhancedAuth.js';
 import { auditLogger } from '../middleware/auditLogger.js';
 import { uploadMiddleware, uploadDocument } from '../controllers/documentController.js';
 import { toPostgresParams } from '../utils/postgres.js';
@@ -8,11 +8,18 @@ import db from '../config/database.js';
 
 const router = express.Router();
 
+// Apply authentication and data filters to all routes
 router.use(authenticate);
+router.use(applyDataFilters);
 
+// Get all loans (with role-based filtering)
 router.get('/', getAllLoans);
+
+// Get burst table (requires dashboard view permission)
 router.get('/burst-table', getBurstTable);
-router.get('/:id/documents', async (req, res) => {
+
+// Get loan documents (with ownership validation)
+router.get('/:id/documents', validateResourceOwnership('loan'), async (req, res) => {
   try {
     const loanResult = await db.query('SELECT lead_id FROM loans WHERE id = $1', [req.params.id]);
     if (loanResult.rows.length === 0) return res.status(404).json({ error: 'Loan not found' });
@@ -71,8 +78,11 @@ router.get('/:id/documents', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router.post('/:id/documents', uploadMiddleware, uploadDocument);
-router.post('/:id/convert-to-lead', async (req, res) => {
+// Upload loan documents (with ownership validation)
+router.post('/:id/documents', validateResourceOwnership('loan'), uploadMiddleware, uploadDocument);
+
+// Convert loan to lead (requires minimum team_leader role)
+router.post('/:id/convert-to-lead', requireMinimumRole('team_leader'), async (req, res) => {
   try {
     const loanId = req.params.id;
     
@@ -167,10 +177,19 @@ router.post('/:id/convert-to-lead', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router.get('/:id', getLoanById);
+// Get loan by ID (with ownership validation)
+router.get('/:id', validateResourceOwnership('loan'), getLoanById);
+
+// Create new loan (requires loans.create permission)
 router.post('/', auditLogger('loans', 'CREATE_LOAN'), createLoan);
-router.put('/:id', auditLogger('loans', 'UPDATE_LOAN'), updateLoan);
-router.delete('/:id', auditLogger('loans', 'DELETE_LOAN'), deleteLoan);
-router.put('/:id/stage', auditLogger('loans', 'UPDATE_STAGE'), updateLoanStage);
+
+// Update loan (with ownership validation)
+router.put('/:id', validateResourceOwnership('loan'), auditLogger('loans', 'UPDATE_LOAN'), updateLoan);
+
+// Delete loan (admin only)
+router.delete('/:id', authorize('admin'), auditLogger('loans', 'DELETE_LOAN'), deleteLoan);
+
+// Update loan stage (requires loans.updateStage permission and ownership validation)
+router.put('/:id/stage', validateResourceOwnership('loan'), auditLogger('loans', 'UPDATE_STAGE'), updateLoanStage);
 
 export default router;

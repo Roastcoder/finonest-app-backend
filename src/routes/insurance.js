@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllPolicies, createPolicy, getPolicyById } from '../controllers/insuranceController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

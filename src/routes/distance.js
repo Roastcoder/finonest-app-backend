@@ -1,6 +1,6 @@
 import express from 'express';
 import { calculateDistance } from '../controllers/distanceController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

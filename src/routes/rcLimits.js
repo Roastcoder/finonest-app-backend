@@ -1,6 +1,6 @@
 import express from 'express';
 import { getDSAFolios, getAllEntries, importBankStatement, getAllFolios, approveEntry } from '../controllers/rcLimitController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

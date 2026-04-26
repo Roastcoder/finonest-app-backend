@@ -1,6 +1,6 @@
 import express from 'express';
 import { getLoanReport, getCommissionReport, getSalesReport, getAnalyticsReport } from '../controllers/reportController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

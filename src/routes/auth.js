@@ -1,6 +1,6 @@
 import express from 'express';
 import { login, signup, getProfile, updateProfile, checkPan, checkAadhaar, updatePhone, sendMobileOtp, verifyMobileOtp, forgotMpin, resetMpin, uploadPhoto, photoUploadMiddleware, updateProfilePhoto, getUnmaskedAadhaar, updateUserAadhaarData } from '../controllers/authController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

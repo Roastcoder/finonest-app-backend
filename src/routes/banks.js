@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllBanks, getBankById, createBank, updateBank, deleteBank, upload, excelUpload, getBankBranches, createBranch, updateBranch, deleteBranch, importBanksWithBranches } from '../controllers/bankController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

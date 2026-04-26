@@ -1,6 +1,6 @@
 import express from 'express';
 import { verifyRC, getRCData } from '../controllers/rcVerificationController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

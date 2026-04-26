@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllExpenses, createExpense, approveExpense, rejectExpense, getExpenseStats, upload } from '../controllers/expenseController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

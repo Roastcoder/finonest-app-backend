@@ -6,6 +6,7 @@ import http from 'http';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import SecurityAudit from '../middleware/securityAudit.js';
 
 // Multer for profile photo uploads
 const photoStorage = multer.diskStorage({
@@ -193,6 +194,7 @@ export const login = async (req, res) => {
     const { phone, password } = req.body;
     
     if (!phone || !password) {
+      await SecurityAudit.logAuthEvent('LOGIN_FAILED', null, { reason: 'Missing credentials', phone }, req);
       return res.status(400).json({ error: 'Phone and password are required' });
     }
     
@@ -204,6 +206,7 @@ export const login = async (req, res) => {
     `, [phone]);
     
     if (result.rows.length === 0) {
+      await SecurityAudit.logAuthEvent('LOGIN_FAILED', null, { reason: 'User not found', phone }, req);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -211,11 +214,19 @@ export const login = async (req, res) => {
     const isValid = await bcrypt.compare(password, user.password);
     
     if (!isValid) {
+      // Increment failed login attempts
+      await db.query(
+        'UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = $1',
+        [user.id]
+      );
+      
+      await SecurityAudit.logAuthEvent('LOGIN_FAILED', user.id, { reason: 'Invalid password' }, req);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     // Check if user account is pending approval
     if (user.status === 'pending') {
+      await SecurityAudit.logAuthEvent('LOGIN_BLOCKED', user.id, { reason: 'Account pending approval' }, req);
       return res.status(403).json({ 
         error: 'Account Pending For Verification. Retry Login After 5 Mins.',
         status: user.status 
@@ -224,6 +235,7 @@ export const login = async (req, res) => {
 
     // Check if account is suspended or inactive
     if (user.status === 'suspended') {
+      await SecurityAudit.logAuthEvent('ACCOUNT_SUSPENDED', user.id, { reason: 'Account suspended' }, req);
       return res.status(403).json({ 
         error: 'Your account has been suspended. Please contact admin.',
         status: user.status 
@@ -231,17 +243,42 @@ export const login = async (req, res) => {
     }
 
     if (user.status === 'inactive') {
+      await SecurityAudit.logAuthEvent('LOGIN_BLOCKED', user.id, { reason: 'Account inactive' }, req);
       return res.status(403).json({ 
         error: 'Your account is inactive. Please contact admin.',
         status: user.status 
       });
     }
 
+    // Check for account lockout due to failed attempts
+    if (user.failed_login_attempts >= 5) {
+      await SecurityAudit.logAuthEvent('ACCOUNT_LOCKED', user.id, { 
+        reason: 'Too many failed attempts', 
+        attempts: user.failed_login_attempts 
+      }, req);
+      return res.status(403).json({ 
+        error: 'Account locked due to multiple failed login attempts. Please contact administrator.',
+        status: 'locked' 
+      });
+    }
+
+    // Reset failed login attempts on successful login
+    await db.query(
+      'UPDATE users SET failed_login_attempts = 0, last_login = CURRENT_TIMESTAMP WHERE id = $1',
+      [user.id]
+    );
+
     const token = jwt.sign(
       { id: user.id, phone: user.phone, role: user.role },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '7d' }
     );
+
+    // Log successful login
+    await SecurityAudit.logAuthEvent('LOGIN_SUCCESS', user.id, { 
+      role: user.role,
+      loginTime: new Date().toISOString()
+    }, req);
 
     res.json({
       token,
@@ -259,6 +296,10 @@ export const login = async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    await SecurityAudit.logAuthEvent('LOGIN_FAILED', null, { 
+      reason: 'System error', 
+      error: error.message 
+    }, req);
     res.status(500).json({ error: error.message });
   }
 };
@@ -280,6 +321,10 @@ export const signup = async (req, res) => {
     
     // Validate required fields
     if (!name || !phone || !password) {
+      await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+        reason: 'Missing required fields', 
+        phone 
+      }, req);
       return res.status(400).json({ error: 'Name, phone, and password are required' });
     }
     
@@ -288,6 +333,10 @@ export const signup = async (req, res) => {
     // Check if phone already exists
     const existingUser = await db.query('SELECT id FROM users WHERE phone = $1', [phone]);
     if (existingUser.rows.length > 0) {
+      await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+        reason: 'Phone already exists', 
+        phone 
+      }, req);
       return res.status(400).json({ error: 'Phone number already exists' });
     }
     
@@ -296,6 +345,11 @@ export const signup = async (req, res) => {
       const existingPan = await db.query('SELECT id, name, full_name FROM users WHERE pan_number = $1', [pan_number]);
       if (existingPan.rows.length > 0) {
         const existingUserName = existingPan.rows[0].name || existingPan.rows[0].full_name;
+        await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+          reason: 'PAN already exists', 
+          pan_number,
+          existing_user: existingUserName 
+        }, req);
         return res.status(400).json({ 
           error: `This PAN number is already registered with ${existingUserName}. Please use a different PAN number or contact support.`,
           errorType: 'PAN_EXISTS'
@@ -308,6 +362,11 @@ export const signup = async (req, res) => {
       const existingAadhaar = await db.query('SELECT id, name, full_name FROM users WHERE aadhaar_number = $1', [aadhaar_number]);
       if (existingAadhaar.rows.length > 0) {
         const existingUserName = existingAadhaar.rows[0].name || existingAadhaar.rows[0].full_name;
+        await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+          reason: 'Aadhaar already exists', 
+          aadhaar_number,
+          existing_user: existingUserName 
+        }, req);
         return res.status(400).json({ 
           error: `This Aadhaar number is already registered with ${existingUserName}. Please use a different Aadhaar number or contact support.`,
           errorType: 'AADHAAR_EXISTS'
@@ -330,6 +389,11 @@ export const signup = async (req, res) => {
       );
       
       if (referrerResult.rows.length === 0) {
+        await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+          reason: 'Invalid refer code', 
+          refer_code,
+          phone 
+        }, req);
         return res.status(400).json({ error: 'Invalid refer code. Please check and try again.' });
       }
       
@@ -369,8 +433,8 @@ export const signup = async (req, res) => {
         user_id, name, full_name, password, phone, role, status, reporting_to, 
         pan_number, aadhaar_number, pan_data, aadhaar_data, pan_verified, aadhaar_verified,
         date_of_birth, gender, father_name, address_line1, address_line2, city, state, pincode, country,
-        kyc_completed, photo_path
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) 
+        kyc_completed, photo_path, failed_login_attempts
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) 
        RETURNING id, user_id, name, full_name, phone, role, status, pan_verified, aadhaar_verified, kyc_completed`,
       [
         userId, name, name, hashedPassword, phone || null, role, finalStatus, reportingTo,
@@ -388,11 +452,20 @@ export const signup = async (req, res) => {
         pan_data?.address?.zip || null,
         pan_data?.address?.country || 'INDIA',
         !!(pan_data && aadhaar_data),
-        photo_path || null
+        photo_path || null,
+        0 // Initialize failed_login_attempts to 0
       ]
     );
     
     const user = result.rows[0];
+    
+    // Log successful signup
+    await SecurityAudit.logAuthEvent('SIGNUP_SUCCESS', user.id, { 
+      role,
+      status: finalStatus,
+      refer_code: refer_code || null,
+      auto_approved: finalStatus === 'active'
+    }, req);
     
     res.status(201).json({ 
       message: approvalMessage,
@@ -412,6 +485,12 @@ export const signup = async (req, res) => {
     
   } catch (error) {
     console.error('Signup error:', error);
+    
+    await SecurityAudit.logAuthEvent('SIGNUP_FAILED', null, { 
+      reason: 'System error', 
+      error: error.message,
+      phone: req.body.phone 
+    }, req);
     
     if (error.code === '23505') {
       return res.status(400).json({ error: 'Phone number already exists' });

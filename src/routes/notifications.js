@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllNotifications, getNotificationById, createNotification, updateNotification, deleteNotification } from '../controllers/notificationController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 router.use(authenticate);

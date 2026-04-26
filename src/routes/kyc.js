@@ -1,7 +1,7 @@
 import express from 'express';
 import { verifyPan, sendAadhaarOtp, verifyAadhaarOtp, verifyAadhaar } from '../controllers/kycController.js';
 import { verifyAndSavePan, saveAadhaarData } from '../controllers/kycVerificationController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

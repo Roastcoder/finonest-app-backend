@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllCommissions, getCommissionById, createCommission, updateCommission, deleteCommission } from '../controllers/commissionController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

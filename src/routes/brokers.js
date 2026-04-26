@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllBrokers, getBrokerById, createBroker, updateBroker, deleteBroker } from '../controllers/brokerController.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, authorize  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 

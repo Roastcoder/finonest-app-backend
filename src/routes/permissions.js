@@ -1,15 +1,22 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth.js';
-import { getPermissions, updatePermissions, getAllRolePermissions, resetPermissions, getDashboardPermissions } from '../controllers/permissionsController.js';
+import { getUserPermissions, checkPermission, getDashboardPermissions, updateUserPermissions } from '../controllers/permissionsController.js';
+import { authenticate, authorize, requireMinimumRole } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 
+// Apply authentication to all routes
 router.use(authenticate);
 
-router.get('/', getPermissions);
+// Get current user's permissions
+router.get('/user', getUserPermissions);
+
+// Get dashboard-specific permissions
 router.get('/dashboard', getDashboardPermissions);
-router.get('/all', getAllRolePermissions);
-router.put('/', updatePermissions);
-router.post('/reset', resetPermissions);
+
+// Check specific permission
+router.get('/check/:permission', checkPermission);
+
+// Update user permissions (admin only)
+router.put('/user', authorize('admin'), updateUserPermissions);
 
 export default router;

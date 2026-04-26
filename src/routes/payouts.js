@@ -1,6 +1,6 @@
 import express from 'express';
 import { getAllPayouts, getPayoutById, createPayout, updatePayout, deletePayout } from '../controllers/payoutController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate  } from '../middleware/enhancedAuth.js';
 
 const router = express.Router();
 router.use(authenticate);
